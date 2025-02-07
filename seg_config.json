@@ -1,0 +1,18 @@
+{
+  "affs_config": {
+            "models_per_gpu": 1,
+            "num_cache_workers": 10
+                 },
+  "frag_config": {
+            "context_px": [4,20,20],
+            "fragments_in_xy": true,
+            "epsilon_agglomerate": 0,
+            "filter_fragments": 0,
+            "min_seed_distance": 5
+                 },
+  "agglo_config": {
+            "threshold": 10,
+            "merge_function": "hist_quant_25",
+            "edges_collection_basename": "edges"
+                  }
+}
