@@ -5,6 +5,7 @@ import logging
 import numpy as np
 import os
 import pymongo
+import sys
 import time
 
 from datetime import date
@@ -205,7 +206,7 @@ def start_predict_worker(
         GPU_pool):
 
     daisy_context = daisy.Context.from_env()
-    worker_id = int(context.get('worker_id'))
+    worker_id = int(daisy_context.get('worker_id'))
     GPU_ID = GPU_pool[worker_id]
 
     worker_script = '/mnt/hdd1/SRC/EMpipelines/EMsegment/emsegment/workers/PredictWorker.py'
@@ -247,7 +248,7 @@ def start_predict_worker(
             config_file
         )]
 
-    logging.debug(f'Worker command: {command}')
+    logging.debug(f'Worker command: {worker_command}')
     # call command
     daisy_call(worker_command, log_out=log_out, log_err=log_err)
 
