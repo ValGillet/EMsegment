@@ -25,10 +25,8 @@ def extract_fragments_worker(input_config):
     logging.info(config)
     
     # Read config (obsolete if with main script)
-    affs_file            = config['affs_file']
-    affs_dataset         = config['affs_dataset']
-    fragments_file       = config['fragments_file']
-    fragments_dataset    = config['fragments_dataset']
+    affs_path            = config['affs_path']
+    fragments_path       = config['fragments_path']
     db_host              = config['db_host']
     db_name              = config['db_name']
     context              = config['context']
@@ -42,13 +40,12 @@ def extract_fragments_worker(input_config):
     mask_dataset         = config['mask_dataset']
     
     # Open files
-    logging.info(f'Reading affs from {affs_file}')
+    logging.info(f'Reading affs from {affs_path}')
 
-    affs = open_ds(os.path.join(affs_file, affs_dataset), mode = 'r')
+    affs = open_ds(affs_path, mode = 'r')
     
-    logging.info(f'Reading fragments from {fragments_file}')
-
-    fragments = open_ds(os.path.join(fragments_file, fragments_dataset), mode='r+')
+    logging.info(f'Reading fragments from {fragments_path}')
+    fragments = open_ds(fragments_path, mode='r+')
 
     if mask_file and isinstance(mask_file, str):
         logging.info(f'Reading mask from {mask_file}')

@@ -132,7 +132,7 @@ def predict(
     pipeline += Squeeze([affs])
     pipeline += ZarrWrite(
             dataset_names={
-                #lsds: 'pred_lsds',
+                # lsds: 'pred_lsds',
                 affs: output_dataset
             },
             store=output_path

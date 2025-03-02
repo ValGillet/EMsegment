@@ -14,8 +14,8 @@ from emsegment.FragmentsBlockwise import extract_fragments_blockwise
 from emsegment.AgglomerateBlockwise import agglomerate_blockwise
 
 
-logging.basicConfig(level=logging.INFO)
-
+logging.basicConfig(level=logging.DEBUG)
+logging.getLogger('pymongo').setLevel(logging.WARNING) # Hide pymongo output when debugging
 
 def segment_dataset(
                 project_dir,
@@ -27,6 +27,7 @@ def segment_dataset(
                 seg_config='seg_config.json',
                 todo=['predict', 'fragment', 'agglomerate'],
                 chunk_voxel_size=[100,500,500],
+                volume_suffix='',
                 roi_start=None,
                 roi_size=None,
                 db_host=None,
@@ -49,21 +50,28 @@ def segment_dataset(
     raw_path = os.path.abspath(input_path)
     store_name = os.path.basename(raw_path).rstrip('.zarr')
     store_name = project_prefix + '_' + store_name if project_prefix else store_name
+    store_name = store_name + '_' + volume_suffix if volume_suffix else store_name
 
     if mask_path == True:
         # If mask path is True but not a path, we assume it exists as a dataset in the raw image store
         assert os.path.exists(os.path.join(raw_path, 'mask'))
         mask_path = raw_path
+        use_mask = True
+    else:
+        use_mask = None
 
-    if not continue_previous:
+    if affs_path is None:
+        # Give the same name as the raw dataset and add an index to differentiate different projects with the same input name
+        affs_path = os.path.join(project_dir, store_name)
+
+    index = str(len(glob(affs_path + '*')))
+
+    if not continue_previous or index == '0':
         logging.info('Starting new project from scratch...')
         # Start this dataset from scratch and create its directory and config file
         seg_config = os.path.abspath(seg_config)
-        if affs_path is None:
-            # Give the same name as the raw dataset and add an index to differentiate different projects with the same input name
-            affs_path = os.path.join(project_dir, store_name)
-            index = str(len(glob(affs_path + '*')))
-            affs_path += '_' + index.zfill(2) + '.zarr'
+
+        affs_path += '_' + index.zfill(2) + '.zarr'
         affs_path = os.path.abspath(affs_path)
         db_name = os.path.basename(affs_path).rstrip('.zarr')
         os.makedirs(affs_path, exist_ok=True)
@@ -74,8 +82,9 @@ def segment_dataset(
         with open(seg_config, 'r') as f:
             seg_config = json.load(f)
             
-        with open(model_config, 'r') as f:
-            model_config = json.load(f)
+        if isinstance(model_config, str):
+            with open(model_config, 'r') as f:
+                model_config = json.load(f)
 
         seg_config['affs_path'] = affs_path
         seg_config['affs_dataset'] = affs_dataset
@@ -84,9 +93,9 @@ def segment_dataset(
 
         # Copy config to the project store
         seg_config.update({'db_name': db_name,
-                           'raw_path': os.path.join(raw_path, raw_dataset),
-                           'affs_path': os.path.join(affs_path, affs_dataset),
-                           'fragments_path': os.path.join(fragments_path, fragments_dataset),
+                           'raw_path': raw_path,
+                           'affs_path': affs_path,
+                           'fragments_path': fragments_path,
                            'chunk_voxel_size': chunk_voxel_size,
                            'roi_start': roi_start,
                            'roi_size': roi_size,
@@ -97,12 +106,8 @@ def segment_dataset(
 
     else:
         logging.info('Continuing where we left off...')
-        # Pick up where we left off with the latest directory and config file
-        affs_path = os.path.join(project_dir, store_name)
-        
-        # Find projects from the same image data
-        projects = glob(affs_path + '*')
-        index = str(len(projects)-1)
+        # Pick up where we left off with the latest directory and config file  
+        index = str(max(0, int(index)-1))
         affs_path += '_' + index.zfill(2) + '.zarr'
 
         with open(os.path.join(affs_path, 'seg_config.json'), 'r') as f:
@@ -118,6 +123,7 @@ def segment_dataset(
     ### Prepare relevant variables ###
     models_per_gpu     = seg_config['affs_config']['models_per_gpu']
     num_cache_workers  = seg_config['affs_config']['num_cache_workers']
+
     # TODO: add possiblity to choose int or float for prediction
 
     context_px           = seg_config['frag_config']['context_px']
@@ -156,7 +162,7 @@ def segment_dataset(
                             db_name=db_name,
                             models_per_gpu=models_per_gpu,
                             num_cache_workers=num_cache_workers, 
-                            mask_path=mask_path,
+                            mask_path=use_mask,
                             db_host=db_host,
                             raw_dataset=raw_dataset,
                             affs_dataset=affs_dataset,
@@ -164,6 +170,7 @@ def segment_dataset(
                             roi_size=roi_size,
                             GPU_pool=GPU_pool):
             sys.exit('Interrupted or something went wrong')
+
 
     ### Fragments ###
     if 'fragment' not in todo:
@@ -229,7 +236,7 @@ def segment_dataset(
         
     logging.info('Segmentation is complete!')
     logging.info(f'Project dir:\n    {project_dir}')
-    logging.info(f'DB name: {db_name}')
+    logging.info(f'DB name: {db_name}\n')
 
     if return_config:
          return seg_config
@@ -284,7 +291,7 @@ if __name__ == '__main__':
                         dest='seg_config',
                         type=str,
                         default='seg_config.json',
-                        help='Path to a JSON file containing paramters for the different segmentation steps.')
+                        help='Path to a JSON file containing parameters for the different segmentation steps.')
     parser.add_argument('--todo',
                         metavar='TODO',
                         dest='todo',
@@ -299,6 +306,12 @@ if __name__ == '__main__':
                         type=int,
                         default=[100,500,500],
                         help='Size of chunks (ZYX in voxels) to process in parallel.')
+    parser.add_argument('--volume-suffix',
+                        metavar='VOLUME_SUFFIX',
+                        dest='volume_suffix',
+                        type=str,
+                        default='',
+                        help='Prefix used to name the project files.')
     parser.add_argument('--roi-start',
                         metavar='ROI_START',
                         dest='roi_start',

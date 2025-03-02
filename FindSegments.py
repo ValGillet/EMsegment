@@ -7,6 +7,7 @@ import os
 import sys
 import time
 
+from datetime import date
 from funlib.segment.graphs.impl import connected_components
 from funlib.persistence import open_ds
 from funlib.geometry import Roi, Coordinate
@@ -23,7 +24,7 @@ def find_segments(
                   edges_collection,
                   thresholds_minmax,
                   thresholds_step,
-                  chunk_voxel_size,
+                  chunk_voxel_size=[100,500,500],
                   num_workers=1,
                   db_host=None,
                   fragments_dataset='frags',
@@ -50,7 +51,7 @@ def find_segments(
     with Manager() as manager:
         shared_list = manager.list()
         tasks = daisy.Task(
-                    task_id = 'test',
+                    task_id = f'Find segments - {db_name}',
                     total_roi = fragments.roi,
                     read_roi = Roi((0,0,0), chunk_size),
                     write_roi = Roi((0,0,0), chunk_size),
@@ -92,17 +93,41 @@ def find_segments(
     start = time.time()
 
     # Extract connected components per threshold
-    for threshold in thresholds:
+    try:
+        for threshold in thresholds:
 
-        get_connected_components(
-                nodes,
-                edges,
-                scores,
-                threshold,
-                edges_collection,
-                out_dir)
+            get_connected_components(
+                    nodes,
+                    edges,
+                    scores,
+                    threshold,
+                    edges_collection,
+                    out_dir)
 
-        logging.info(f'Created and stored lookup tables in {time.time() - start}')
+            logging.info(f'Created and stored lookup tables in {time.time() - start}')
+        db = MongoClient(db_host)[db_name]
+        doc = {
+            'task': 'find_segments',
+            'date': date.today().strftime('%d%m%Y'),
+            'voxel_size': list(fragments.voxel_size),
+            'fragments_path': fragments_path,
+            'edges_collection': edges_collection,
+            'thresholds_minmax': thresholds_minmax,
+            'thresholds_step': thresholds_step,
+            'chunk_voxel_size': chunk_voxel_size,
+            'num_workers': num_workers,
+            'fragments_dataset': fragments_dataset,
+            'chunk_bbox': chunk_bbox,
+            'run_type': run_type
+            }
+        db['info_segmentation'].insert_one(doc)
+        
+        return True
+
+    except Exception as e:
+        raise(e)
+    
+
 
 
 def get_connected_components(

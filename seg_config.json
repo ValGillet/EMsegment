@@ -1,7 +1,7 @@
 {
   "affs_config": {
             "models_per_gpu": 1,
-            "num_cache_workers": 10
+            "num_cache_workers": 4 
                  },
   "frag_config": {
             "context_px": [4,20,20],
