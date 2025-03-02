@@ -62,16 +62,18 @@ def extract_fragments_blockwise(
     num_voxels_in_block = (write_roi/affs.voxel_size).get_size()    
 
     # Prepare fragment dataset
-    total_roi = affs.roi.grow(context, context)
-    fragments_vx_shape = total_roi.get_shape() / voxel_size
     fragments = prepare_ds(
                            store=os.path.join(fragments_path, fragments_dataset),
-                           shape=fragments_vx_shape,
-                           offset=total_roi.begin,
+                           shape=affs.roi.get_shape() / voxel_size,
+                           offset=affs.roi.begin,
                            voxel_size=voxel_size,
-                           mode='w',
+                           axis_names=['z','y','x'],
+                           units=['nm','nm','nm'],
+                           mode='a',
                            chunk_shape=Coordinate(chunk_voxel_size),
-                           dtype=np.uint64)
+                           dtype=np.uint64
+                           )
+    total_roi = affs.roi.grow(context, context)
 
     # Prepare MongoDB to log blocks
     client = pymongo.MongoClient(db_host)
@@ -93,10 +95,8 @@ def extract_fragments_blockwise(
                 read_roi=read_roi,
                 write_roi=write_roi,
                 process_function=lambda: start_frag_worker(
-                                                     affs_path,
-                                                     affs_dataset,
-                                                     fragments_path,
-                                                     fragments_dataset,
+                                                     os.path.join(affs_path, affs_dataset),
+                                                     os.path.join(fragments_path, fragments_dataset),
                                                      db_host,
                                                      db_name,
                                                      context,
@@ -140,16 +140,14 @@ def extract_fragments_blockwise(
             'filter_fragments': filter_fragments,
             'min_seed_distance': min_seed_distance,
             'replace_sections': replace_sections,
-            }
+              }
         db['info_segmentation'].insert_one(doc)
     
     return done
 
 def start_frag_worker(
-                 affs_file,
-                 affs_dataset,
-                 fragments_file,
-                 fragments_dataset,
+                 affs_path,
+                 fragments_path,
                  db_host,
                  db_name,
                  context,
@@ -175,10 +173,8 @@ def start_frag_worker(
     log_err = os.path.join(output_dir, 'extract_fragments_blockwise_%d.err' %worker_id)
 
     config = {
-            'affs_file': affs_file,
-            'affs_dataset': affs_dataset,
-            'fragments_file': fragments_file,
-            'fragments_dataset': fragments_dataset,
+            'affs_path': affs_path,
+            'fragments_path': fragments_path,
             'db_host': db_host,
             'db_name': db_name,
             'context': context,
