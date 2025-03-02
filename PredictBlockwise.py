@@ -11,6 +11,7 @@ import time
 from datetime import date
 from funlib.persistence import open_ds, prepare_ds
 from funlib.geometry import Roi, Coordinate
+from zarr import ThreadSynchronizer
 
 from emsegment.utils.block_wise_process import check_block, daisy_call
 
@@ -22,7 +23,7 @@ def get_mask_roi(mask, source, raw_path, db_host=None):
 
     if isinstance(mask, bool):
         client = pymongo.MongoClient(db_host)
-        db_mask = 'mask_info_' + raw_path.split('/')[-1].split('.')[0]
+        db_mask = 'mask_info_' + raw_path.split('/')[-1].rstrip('.zarr')
 
         assert db_mask in client.list_database_names()
 
@@ -58,9 +59,16 @@ def predict_blockwise(
             db_host=None,
             raw_dataset='raw',
             affs_dataset='pred_affs',
+            chunk_shape=True,
             roi_start=None,
             roi_size=None,
             GPU_pool=None):
+    
+    '''
+    Args:
+
+        model_config:
+    '''
     
     model_path      = model_config['model_path']
     num_fmaps       = model_config['num_fmaps']
@@ -81,13 +89,15 @@ def predict_blockwise(
     logging.info(f'Model at:\n    {model_path}\n')
     
     # Prepare raw data 
-    source = open_ds(os.path.join(raw_path, raw_dataset))
-    # source = open_ds(raw_path, raw_dataset)
+    source = open_ds(os.path.join(raw_path, raw_dataset), mode='r')
     total_roi = source.roi
     
-    if roi_start is not None and roi_size is not None:
-        roi = Roi(roi_start, roi_size)
-        total_roi = total_roi.intersect(roi)
+    # Constrain start and/or size to what was provided
+    if roi_start is None:
+        roi_start = total_roi.begin
+    if roi_size is None:
+        roi_size = total_roi.end - roi_start
+    total_roi = total_roi.intersect(Roi(roi_start, roi_size))
 
     if mask_path is not None:
         # Either use mask info from the db, or crop to a given bbox ([begin_zyx, shape_zyx])
@@ -111,21 +121,28 @@ def predict_blockwise(
     write_roi = Roi((0,0,0), output_size)
 
     # Get total ROIs (shrink total_roi)
-    output_roi = total_roi.grow(-context, -context)
-    output_vx_shape = output_roi.get_shape() / voxel_size
+    input_roi = total_roi.grow(context, context)
+    output_roi = total_roi
+    output_roi_shape = output_roi.get_shape() / voxel_size
 
     # Prepare output
     affs = prepare_ds(
                       store=os.path.join(affs_path, affs_dataset),
-                      shape=(3, *output_vx_shape),
+                      shape=(3, *output_roi_shape),
                       offset=total_roi.begin,
                       voxel_size=voxel_size,
+                      axis_names=['c^','z','y','x'],
+                      units=['nm','nm','nm'],
                       mode='a',
-                      dtype=np.float32)
+                      dtype=np.float32,
+                      chunk_shape=Coordinate(3, *output_shape) # Chunk shape needs to be write-aligned or we end up with black patches
+                      )
     
     logging.info(f'Source roi: {total_roi}')
     logging.info(f'Output roi: {affs.roi}')
     logging.info(f'Source voxel size: {source.voxel_size}')
+    logging.info(f'Read ROI: {read_roi}')
+    logging.info(f'Write ROI: {write_roi}')
     
     # MongoDB stuff
     client = pymongo.MongoClient(db_host)
@@ -141,7 +158,7 @@ def predict_blockwise(
     logging.info('Starting block-wise processing...')
     tasks = daisy.Task(
                 task_id=f'Predict-{db_name}',
-                total_roi=output_roi,
+                total_roi=input_roi,
                 read_roi=read_roi,
                 write_roi=write_roi,
                 process_function=lambda: start_predict_worker(
