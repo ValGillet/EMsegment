@@ -33,6 +33,7 @@ def segment_dataset(
                 db_host=None,
                 affs_path=None,
                 fragments_path=None,
+                use_mask=False,
                 mask_path=None,
                 raw_dataset='raw',
                 mask_dataset='mask',
@@ -52,13 +53,11 @@ def segment_dataset(
     store_name = project_prefix + '_' + store_name if project_prefix else store_name
     store_name = store_name + '_' + volume_suffix if volume_suffix else store_name
 
-    if mask_path == True:
-        # If mask path is True but not a path, we assume it exists as a dataset in the raw image store
+    if use_mask and mask_path is None:
+        # If no mask_path is specified, we assume it exists as a dataset in the raw image store
         assert os.path.exists(os.path.join(raw_path, 'mask'))
         mask_path = raw_path
-        use_mask = True
-    else:
-        use_mask = None
+        logging.info('Will use mask')
 
     if affs_path is None:
         # Give the same name as the raw dataset and add an index to differentiate different projects with the same input name
@@ -162,7 +161,7 @@ def segment_dataset(
                             db_name=db_name,
                             models_per_gpu=models_per_gpu,
                             num_cache_workers=num_cache_workers, 
-                            mask_path=use_mask,
+                            mask_path=mask_path,
                             db_host=db_host,
                             raw_dataset=raw_dataset,
                             affs_dataset=affs_dataset,
@@ -256,7 +255,7 @@ if __name__ == '__main__':
     parser.add_argument('-prefix', '--project-prefix',
                         metavar='PROJECT_PREFIX',
                         dest='project_prefix',
-                        required=True,
+                        default='',
                         type=str,
                         help='Prefix used to name the project files.')
     parser.add_argument('-i', '--input-path',

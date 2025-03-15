@@ -19,34 +19,25 @@ logging.basicConfig(level=logging.INFO)
 logging.getLogger('pymongo').setLevel(logging.WARNING) # Hide pymongo output when debugging
 
 
-def get_mask_roi(mask, source, raw_path, db_host=None):
+def get_mask_roi(raw_path, db_host=None):
 
-    if isinstance(mask, bool):
-        client = pymongo.MongoClient(db_host)
-        db_mask = 'mask_info_' + raw_path.split('/')[-1].rstrip('.zarr')
+    client = pymongo.MongoClient(db_host)
+    db_mask = 'mask_info_' + raw_path.split('/')[-1].rstrip('.zarr')
 
-        assert db_mask in client.list_database_names()
+    assert db_mask in client.list_database_names()
 
-        db = client[db_mask]
-        blocks_data = db['block_data']
+    db = client[db_mask]
+    blocks_data = db['block_data']
 
-        top_left_nm = [d['top_left_nm'] for d in blocks_data.find({'block_masked_in':1})]
-        bot_right_nm = [d['bot_right_nm'] for d in blocks_data.find({'block_masked_in':1})]
+    top_left_nm = [d['top_left_nm'] for d in blocks_data.find({'block_masked_in':1})]
+    bot_right_nm = [d['bot_right_nm'] for d in blocks_data.find({'block_masked_in':1})]
 
-        begin = np.min(top_left_nm, 0)
-        end = np.max(bot_right_nm, 0)
+    begin = np.min(top_left_nm, 0)
+    end = np.max(bot_right_nm, 0)
 
-        size = end-begin
-        roi = Roi(begin, size)
-
-    elif isinstance(mask, list):
-        begin_vx, shape_vx = mask
-        begin = Coordinate(begin_vx) * source.voxel_size
-        size = Coordinate(shape_vx) * source.voxel_size
-        roi = Roi(begin, size)
-
-    return roi
-
+    size = end-begin
+    return Roi(begin, size)
+    
 
 def predict_blockwise(
             model_config,
@@ -59,7 +50,6 @@ def predict_blockwise(
             db_host=None,
             raw_dataset='raw',
             affs_dataset='pred_affs',
-            chunk_shape=True,
             roi_start=None,
             roi_size=None,
             GPU_pool=None):
@@ -101,7 +91,7 @@ def predict_blockwise(
 
     if mask_path is not None:
         # Either use mask info from the db, or crop to a given bbox ([begin_zyx, shape_zyx])
-        masked_roi = get_mask_roi(mask_path, source, raw_path, db_host)
+        masked_roi = get_mask_roi(raw_path, db_host)
         
         logging.info(f'Cropping ROI of source: {source.roi}')
         logging.info(f'To ROI of mask: {masked_roi}')
