@@ -36,8 +36,7 @@ def extract_fragments_worker(input_config):
     filter_fragments     = config['filter_fragments']
     replace_sections     = config['replace_sections']    
     min_seed_distance    = config['min_seed_distance']
-    mask_file            = config['mask_file']
-    mask_dataset         = config['mask_dataset']
+    mask_path            = config['mask_path']
     
     # Open files
     logging.info(f'Reading affs from {affs_path}')
@@ -47,9 +46,9 @@ def extract_fragments_worker(input_config):
     logging.info(f'Reading fragments from {fragments_path}')
     fragments = open_ds(fragments_path, mode='r+')
 
-    if mask_file and isinstance(mask_file, str):
-        logging.info(f'Reading mask from {mask_file}')
-        mask = open_ds(os.path.join(mask_file, mask_dataset))
+    if mask_path and isinstance(mask_path, str):
+        logging.info(f'Reading mask from {mask_path}')
+        mask = open_ds(mask_path)
     else:
         mask = None
 
