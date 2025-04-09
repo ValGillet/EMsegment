@@ -6,6 +6,8 @@ import sys
 import time
 
 from datetime import date
+from funlib.persistence import open_ds
+from funlib.geometry import Roi
 from glob import glob
 from pymongo import MongoClient
 
@@ -16,6 +18,10 @@ from emsegment.AgglomerateBlockwise import agglomerate_blockwise
 
 logging.basicConfig(level=logging.DEBUG)
 logging.getLogger('pymongo').setLevel(logging.WARNING) # Hide pymongo output when debugging
+
+
+# ToDo:
+# Create main container and work from there instead of affs_path
 
 def segment_dataset(
                 project_dir,
@@ -49,35 +55,60 @@ def segment_dataset(
     # If no affs_path is provided, the output will have the same name as the raw dataset
     project_dir = os.path.abspath(project_dir)
     raw_path = os.path.abspath(input_path)
+
+    # Store name will be same as the raw data
     store_name = os.path.basename(raw_path).rstrip('.zarr')
+    # Add prefix and suffix if provided
     store_name = project_prefix + '_' + store_name if project_prefix else store_name
     store_name = store_name + '_' + volume_suffix if volume_suffix else store_name
 
+    # Snap ROI to voxel size
+    if roi_start is not None or roi_size is not None:
+        ds = open_ds(os.path.join(raw_path, raw_dataset), 'r')
+        voxel_size = ds.voxel_size
+        roi_start = roi_start if roi_start is not None else [None]*3
+        roi_size = roi_size if roi_size is not None else [None]*3
+
+        roi = Roi(roi_start, roi_size)
+        logging.info(f'Roi queried:\n    {roi}')
+        roi = roi.snap_to_grid(voxel_size, 'closest')
+        roi = ds.roi.intersect(roi)
+        logging.info(f'Intersecting with raw data and snapping to voxel size {voxel_size}:\n    {roi}')
+        roi_size = roi.shape
+        roi_start = roi.begin
+
     if use_mask and mask_path is None:
         # If no mask_path is specified, we assume it exists as a dataset in the raw image store
-        assert os.path.exists(os.path.join(raw_path, 'mask'))
+        mask_path = os.path.join(raw_path, mask_dataset)
+        assert os.path.exists(mask_path)
         mask_path = raw_path
-        logging.info('Will use mask')
+        logging.info(f'Will use mask from {mask_path}')
 
+    # Get zarr name
     if affs_path is None:
         # Give the same name as the raw dataset and add an index to differentiate different projects with the same input name
-        affs_path = os.path.join(project_dir, store_name)
+        store_path = os.path.join(project_dir, store_name)
+        index = str(len(glob(store_path + '*')))
+    else:
+        store_path = affs_path.rstrip('.zarr')
 
-    index = str(len(glob(affs_path + '*')))
-
+    # Continue or new project
     if not continue_previous or index == '0':
-        logging.info('Starting new project from scratch...')
         # Start this dataset from scratch and create its directory and config file
+        logging.info('Starting new project from scratch...')
         seg_config = os.path.abspath(seg_config)
 
-        affs_path += '_' + index.zfill(2) + '.zarr'
-        affs_path = os.path.abspath(affs_path)
+        if affs_path is None:
+            # New zarr gets a new index
+            affs_path = store_path + '_' + index.zfill(2) + '.zarr'
+            affs_path = os.path.abspath(affs_path)
+            
+            os.makedirs(affs_path, exist_ok=True)
+        
         db_name = os.path.basename(affs_path).rstrip('.zarr')
-        os.makedirs(affs_path, exist_ok=True)
-
         fragments_path = affs_path if fragments_path is None else os.path.abspath(fragments_path)
 
-        ### Get config parameters ###
+        # Get config parameters
         with open(seg_config, 'r') as f:
             seg_config = json.load(f)
             
@@ -104,10 +135,11 @@ def segment_dataset(
             json.dump(seg_config, f, indent='')
 
     else:
+        # Pick up where we left off with the latest index and config file  
         logging.info('Continuing where we left off...')
-        # Pick up where we left off with the latest directory and config file  
         index = str(max(0, int(index)-1))
-        affs_path += '_' + index.zfill(2) + '.zarr'
+        affs_path = store_path + '_' + index.zfill(2) + '.zarr'
+        affs_path = os.path.abspath(affs_path)
 
         with open(os.path.join(affs_path, 'seg_config.json'), 'r') as f:
             seg_config = json.load(f)
@@ -122,8 +154,6 @@ def segment_dataset(
     ### Prepare relevant variables ###
     models_per_gpu     = seg_config['affs_config']['models_per_gpu']
     num_cache_workers  = seg_config['affs_config']['num_cache_workers']
-
-    # TODO: add possiblity to choose int or float for prediction
 
     context_px           = seg_config['frag_config']['context_px']
     fragments_in_xy      = seg_config['frag_config']['fragments_in_xy']
@@ -345,6 +375,11 @@ if __name__ == '__main__':
                         default=None,
                         help='Path to the zarr container where to write fragments.\
                               Will be stored in the same container as affinities if not provided.')
+    parser.add_argument('--use-mask',
+                        dest='use_mask',
+                        default=False,
+                        action='store_true',
+                        help='Whether to use a mask. If mask_path is not specified, will look at input_path.')
     parser.add_argument('--mask-path',
                         metavar='MASK_PATH',
                         dest='mask_path',
