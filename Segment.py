@@ -20,9 +20,6 @@ logging.basicConfig(level=logging.DEBUG)
 logging.getLogger('pymongo').setLevel(logging.WARNING) # Hide pymongo output when debugging
 
 
-# ToDo:
-# Create main container and work from there instead of affs_path
-
 def segment_dataset(
                 project_dir,
                 project_prefix,
@@ -37,24 +34,30 @@ def segment_dataset(
                 roi_start=None,
                 roi_size=None,
                 db_host=None,
-                affs_path=None,
+                output_path=None,
                 fragments_path=None,
                 use_mask=False,
                 mask_path=None,
                 raw_dataset='raw',
                 mask_dataset='mask',
                 affs_dataset='pred_affs',
+                lsds_dataset='pred_lsds',
                 fragments_dataset='frags',
                 start_over=False,
                 continue_previous=False,
                 return_config=False
                    ):
+    
+    tasks = ['predict', 'fragment', 'agglomerate']
+    if any([t not in tasks for t in todo]):
+        raise ValueError(f'Invalid todo list, must be any combination of {tasks}')
 
     ### Prepare file paths ###
     # By default all outputs go to the same zarr store in different datasets
-    # If no affs_path is provided, the output will have the same name as the raw dataset
+    # If no output_path is provided, the output will have the same name as the raw dataset
     project_dir = os.path.abspath(project_dir)
     raw_path = os.path.abspath(input_path)
+    ds = open_ds(os.path.join(raw_path, raw_dataset), 'r') # Open here to test if it exists before we create any file
 
     # Store name will be same as the raw data
     store_name = os.path.basename(raw_path).rstrip('.zarr')
@@ -64,7 +67,6 @@ def segment_dataset(
 
     # Snap ROI to voxel size
     if roi_start is not None or roi_size is not None:
-        ds = open_ds(os.path.join(raw_path, raw_dataset), 'r')
         voxel_size = ds.voxel_size
         roi_start = roi_start if roi_start is not None else [None]*3
         roi_size = roi_size if roi_size is not None else [None]*3
@@ -85,12 +87,12 @@ def segment_dataset(
         logging.info(f'Will use mask from {mask_path}')
 
     # Get zarr name
-    if affs_path is None:
+    if output_path is None:
         # Give the same name as the raw dataset and add an index to differentiate different projects with the same input name
         store_path = os.path.join(project_dir, store_name)
         index = str(len(glob(store_path + '*')))
     else:
-        store_path = affs_path.rstrip('.zarr')
+        store_path = output_path.rstrip('.zarr')
 
     # Continue or new project
     if not continue_previous or index == '0':
@@ -98,15 +100,15 @@ def segment_dataset(
         logging.info('Starting new project from scratch...')
         seg_config = os.path.abspath(seg_config)
 
-        if affs_path is None:
+        if output_path is None:
             # New zarr gets a new index
-            affs_path = store_path + '_' + index.zfill(2) + '.zarr'
-            affs_path = os.path.abspath(affs_path)
+            output_path = store_path + '_' + index.zfill(2) + '.zarr'
+            output_path = os.path.abspath(output_path)
             
-            os.makedirs(affs_path, exist_ok=True)
+            os.makedirs(output_path, exist_ok=True)
         
-        db_name = os.path.basename(affs_path).rstrip('.zarr')
-        fragments_path = affs_path if fragments_path is None else os.path.abspath(fragments_path)
+        db_name = os.path.basename(output_path).rstrip('.zarr')
+        fragments_path = output_path if fragments_path is None else os.path.abspath(fragments_path)
 
         # Get config parameters
         with open(seg_config, 'r') as f:
@@ -116,32 +118,34 @@ def segment_dataset(
             with open(model_config, 'r') as f:
                 model_config = json.load(f)
 
-        seg_config['affs_path'] = affs_path
+        seg_config['output_path'] = output_path
         seg_config['affs_dataset'] = affs_dataset
+        seg_config['lsds_dataset'] = lsds_dataset
         seg_config['fragments_path'] = fragments_path
         seg_config['fragments_dataset'] = fragments_dataset
 
         # Copy config to the project store
         seg_config.update({'db_name': db_name,
                            'raw_path': raw_path,
-                           'affs_path': affs_path,
+                           'output_path': output_path,
                            'fragments_path': fragments_path,
+                           'mask_path': mask_path,
                            'chunk_voxel_size': chunk_voxel_size,
                            'roi_start': roi_start,
                            'roi_size': roi_size,
                            'model_config': model_config,
                            'start_date': date.today().strftime('%d%m%Y')})
-        with open(os.path.join(affs_path, 'seg_config.json'), 'w') as f:
+        with open(os.path.join(output_path, 'seg_config.json'), 'w') as f:
             json.dump(seg_config, f, indent='')
 
     else:
         # Pick up where we left off with the latest index and config file  
         logging.info('Continuing where we left off...')
         index = str(max(0, int(index)-1))
-        affs_path = store_path + '_' + index.zfill(2) + '.zarr'
-        affs_path = os.path.abspath(affs_path)
+        output_path = store_path + '_' + index.zfill(2) + '.zarr'
+        output_path = os.path.abspath(output_path)
 
-        with open(os.path.join(affs_path, 'seg_config.json'), 'r') as f:
+        with open(os.path.join(output_path, 'seg_config.json'), 'r') as f:
             seg_config = json.load(f)
 
         db_name = seg_config['db_name']
@@ -152,8 +156,10 @@ def segment_dataset(
         model_config = seg_config['model_config']
 
     ### Prepare relevant variables ###
-    models_per_gpu     = seg_config['affs_config']['models_per_gpu']
-    num_cache_workers  = seg_config['affs_config']['num_cache_workers']
+    models_per_gpu     = seg_config['pred_config']['models_per_gpu']
+    num_cache_workers  = seg_config['pred_config']['num_cache_workers']
+    write_affs         = seg_config['pred_config']['write_affs']
+    write_lsds         = seg_config['pred_config']['write_lsds']
 
     context_px           = seg_config['frag_config']['context_px']
     fragments_in_xy      = seg_config['frag_config']['fragments_in_xy']
@@ -169,7 +175,7 @@ def segment_dataset(
     client = MongoClient(db_host)
     db = client[db_name]
 
-    logging.info(f'Progress and segmentation will be stored in :\n    Path: {affs_path}\n    DB: {db_name}')
+    logging.info(f'Progress and segmentation will be stored in :\n    Path: {output_path}\n    DB: {db_name}')
 
     ### Prediction ###
     if 'predict' not in todo:
@@ -184,10 +190,11 @@ def segment_dataset(
             except:
                 logging.debug('STARTING OVER BUT DB CHECK BLOCK PREDICTIONS ALREADY EMPTY')
         print('\n----- PREDICTION -----')
+        assert write_affs or write_lsds, 'At least one output must be written to file.'
         if not predict_blockwise(
                             model_config=model_config,
                             raw_path=raw_path,
-                            affs_path=affs_path,
+                            output_path=output_path,
                             db_name=db_name,
                             models_per_gpu=models_per_gpu,
                             num_cache_workers=num_cache_workers, 
@@ -195,6 +202,9 @@ def segment_dataset(
                             db_host=db_host,
                             raw_dataset=raw_dataset,
                             affs_dataset=affs_dataset,
+                            lsds_dataset=lsds_dataset,
+                            write_affs=write_affs,
+                            write_lsds=write_lsds,
                             roi_start=roi_start,
                             roi_size=roi_size,
                             GPU_pool=GPU_pool):
@@ -215,7 +225,7 @@ def segment_dataset(
                 logging.debug('STARTING OVER BUT DB CHECK BLOCK FRAGMENTS ALREADY EMPTY')
         print('\n----- FRAGMENTS -----')
         if not extract_fragments_blockwise(
-                            affs_path=affs_path,
+                            output_path=output_path,
                             chunk_voxel_size=chunk_voxel_size,
                             context_px=context_px,
                             db_name=db_name,
@@ -224,8 +234,7 @@ def segment_dataset(
                             affs_dataset=affs_dataset,
                             fragments_path=fragments_path,
                             fragments_dataset=fragments_dataset,
-                            mask_file=mask_path,
-                            mask_dataset=mask_dataset,
+                            mask_path=mask_path,
                             fragments_in_xy=fragments_in_xy,
                             epsilon_agglomerate=epsilon_agglomerate,
                             filter_fragments=filter_fragments,
@@ -248,7 +257,7 @@ def segment_dataset(
                 logging.debug('STARTING OVER BUT DB CHECK BLOCK AGGLOMERATION ALREADY EMPTY')
         print('\n----- AGGLOMERATION -----')
         if not agglomerate_blockwise(
-                            affs_path=affs_path,
+                            output_path=output_path,
                             chunk_voxel_size=chunk_voxel_size,
                             context_px=context_px,
                             db_name=db_name,
@@ -265,7 +274,7 @@ def segment_dataset(
         
     logging.info('Segmentation is complete!')
     logging.info(f'Project dir:\n    {project_dir}')
-    logging.info(f'DB name: {db_name}\n')
+    logging.info(f'DB name:\n {db_name}\n')
 
     if return_config:
          return seg_config
@@ -362,8 +371,8 @@ if __name__ == '__main__':
                         default=None,
                         help='URI to the MongoDB where to store information. Default: None (localhost)')
     parser.add_argument('--affs-path',
-                        metavar='AFFS_PATH',
-                        dest='affs_path',
+                        metavar='output_path',
+                        dest='output_path',
                         type=str,
                         default=None,
                         help='Path to the zarr container where to write affinity predictions.\
@@ -375,10 +384,10 @@ if __name__ == '__main__':
                         default=None,
                         help='Path to the zarr container where to write fragments.\
                               Will be stored in the same container as affinities if not provided.')
-    parser.add_argument('--use-mask',
+    parser.add_argument('--no-mask',
                         dest='use_mask',
-                        default=False,
-                        action='store_true',
+                        default=True,
+                        action='store_false',
                         help='Whether to use a mask. If mask_path is not specified, will look at input_path.')
     parser.add_argument('--mask-path',
                         metavar='MASK_PATH',

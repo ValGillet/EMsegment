@@ -83,12 +83,15 @@ def predict(
         raw_path,
         raw_dataset,
         output_path,
-        output_dataset,
         input_size,
         output_size,
         db_host,
         db_name,
-        num_cache_workers):
+        num_cache_workers,
+        affs_dataset='pred_affs',
+        lsds_dataset='pred_lsds',
+        write_affs=True,
+        write_lsds=False):
 
     model = AffsLsdModel(num_fmaps=num_fmaps)
     model.eval()
@@ -97,6 +100,12 @@ def predict(
     lsds = ArrayKey('LSDS')
     affs = ArrayKey('AFFS')
 
+    write_datasets = {}
+    if write_affs:
+        write_datasets[affs] = affs_dataset
+    if write_lsds:
+        write_datasets[lsds] = lsds_dataset
+        
     chunk_request = BatchRequest()
     chunk_request.add(raw, input_size)
     chunk_request.add(lsds, output_size)
@@ -131,10 +140,7 @@ def predict(
     #pipeline += IntensityScaleShift(affs, 255, 0)
     pipeline += Squeeze([affs])
     pipeline += ZarrWrite(
-            dataset_names={
-                # lsds: 'pred_lsds',
-                affs: output_dataset
-            },
+            dataset_names=write_datasets,
             store=output_path
                          )
 

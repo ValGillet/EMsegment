@@ -42,7 +42,7 @@ def get_mask_roi(raw_path, db_host=None):
 def predict_blockwise(
             model_config,
             raw_path,
-            affs_path,
+            output_path,
             db_name,
             models_per_gpu=1,
             num_cache_workers=4,
@@ -50,6 +50,9 @@ def predict_blockwise(
             db_host=None,
             raw_dataset='raw',
             affs_dataset='pred_affs',
+            lsds_dataset='pred_lsds',
+            write_affs=True,
+            write_lsds=False,
             roi_start=None,
             roi_size=None,
             GPU_pool=None):
@@ -73,7 +76,7 @@ def predict_blockwise(
     # Prepare paths
     model_path = os.path.abspath(model_path)
     raw_path   = os.path.abspath(raw_path)
-    affs_path  = os.path.abspath(affs_path)
+    output_path  = os.path.abspath(output_path)
 
     assert os.path.exists(model_path)
     logging.info(f'Model at:\n    {model_path}\n')
@@ -116,23 +119,41 @@ def predict_blockwise(
     output_roi_shape = output_roi.get_shape() / voxel_size
 
     # Prepare output
-    affs = prepare_ds(
-                      store=os.path.join(affs_path, affs_dataset),
-                      shape=(3, *output_roi_shape),
-                      offset=total_roi.begin,
-                      voxel_size=voxel_size,
-                      axis_names=['c^','z','y','x'],
-                      units=['nm','nm','nm'],
-                      mode='a',
-                      dtype=np.float32,
-                      chunk_shape=Coordinate(3, *output_shape) # Chunk shape needs to be write-aligned or we end up with black patches
-                      )
+    if write_affs:
+        affs = prepare_ds(
+                        store=os.path.join(output_path, affs_dataset),
+                        shape=(3, *output_roi_shape),
+                        offset=total_roi.begin,
+                        voxel_size=voxel_size,
+                        axis_names=['c^','z','y','x'],
+                        units=['nm','nm','nm'],
+                        mode='a',
+                        dtype=np.float32,
+                        chunk_shape=Coordinate(3, *output_shape) # Chunk shape needs to be write-aligned or we end up with black patches
+                        )
+    if write_lsds:
+        lsds = prepare_ds(
+                        store=os.path.join(output_path, lsds_dataset),
+                        shape=(11, *output_roi_shape),
+                        offset=total_roi.begin,
+                        voxel_size=voxel_size,
+                        axis_names=['c^','z','y','x'],
+                        units=['nm','nm','nm'],
+                        mode='a',
+                        dtype=np.float32,
+                        chunk_shape=Coordinate(11, *output_shape) # Chunk shape needs to be write-aligned or we end up with black patches
+                        )
     
     logging.info(f'Source roi: {total_roi}')
-    logging.info(f'Output roi: {affs.roi}')
+    logging.info(f'Input roi: {input_roi}')
+    logging.info(f'Output roi: {output_roi}')
     logging.info(f'Source voxel size: {source.voxel_size}')
     logging.info(f'Read ROI: {read_roi}')
     logging.info(f'Write ROI: {write_roi}')
+    if write_affs:
+        logging.info('Writing affinities')
+    if write_lsds:
+        logging.info('Writing LSDs')
     
     # MongoDB stuff
     client = pymongo.MongoClient(db_host)
@@ -156,8 +177,11 @@ def predict_blockwise(
                                                         num_fmaps,
                                                         raw_path,
                                                         raw_dataset,
-                                                        affs_path,
+                                                        output_path,
                                                         affs_dataset,
+                                                        lsds_dataset,
+                                                        write_affs,
+                                                        write_lsds,
                                                         input_size,
                                                         output_size,
                                                         db_host,
@@ -186,8 +210,11 @@ def predict_blockwise(
             'num_fmaps': num_fmaps,
             'raw_path': raw_path,
             'raw_dataset': raw_dataset,
-            'affs_path': affs_path,
+            'output_path': output_path,
             'affs_dataset': affs_dataset,
+            'lsds_dataset': lsds_dataset,
+            'write_affs': write_affs,
+            'write_lsds': write_lsds,
             'input_size': input_size,
             'output_size': output_size,
             'num_cache_workers': num_cache_workers,
@@ -203,8 +230,11 @@ def start_predict_worker(
         num_fmaps,
         raw_path,
         raw_dataset,
-        affs_path,
+        output_path,
         affs_dataset,
+        lsds_dataset,
+        write_affs,
+        write_lsds,
         input_size,
         output_size,
         db_host,
@@ -229,13 +259,16 @@ def start_predict_worker(
         'num_fmaps': num_fmaps,
         'raw_path': raw_path,
         'raw_dataset': raw_dataset,
-        'output_path': affs_path,
-        'output_dataset': affs_dataset,
+        'output_path': output_path,
         'input_size': input_size,
         'output_size': output_size,
         'db_host': db_host,
         'db_name': db_name,
-        'num_cache_workers': num_cache_workers
+        'num_cache_workers': num_cache_workers,
+        'affs_dataset': affs_dataset,
+        'lsds_dataset': lsds_dataset,
+        'write_affs': write_affs,
+        'write_lsds': write_lsds
     }
 
     config_str = ''.join(['%s'%(v,) for v in config.values()])
