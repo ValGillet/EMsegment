@@ -5,3 +5,4 @@ __pycache__/
 workers/tmp*
 *.egg-info
 *.ipynb
+*.zarr
