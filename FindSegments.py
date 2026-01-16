@@ -128,8 +128,6 @@ def find_segments(
         raise(e)
     
 
-
-
 def get_connected_components(
         nodes,
         edges,
