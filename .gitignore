@@ -6,3 +6,4 @@ workers/tmp*
 *.egg-info
 *.ipynb
 *.zarr
+.vscode
