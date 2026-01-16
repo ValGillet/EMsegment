@@ -7,3 +7,4 @@ workers/tmp*
 *.ipynb
 *.zarr
 .vscode
+utils/nglancer.py
