@@ -11,7 +11,7 @@ import waterz
 logger = logging.getLogger(__name__)
 
 '''
-Code extracted from lsd by Funke lab.
+Code extracted from lsd by Funke lab: https://github.com/funkelab/lsd/tree/master/lsd/post
 '''
 
 def watershed_in_block_affs(
