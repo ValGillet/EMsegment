@@ -20,6 +20,8 @@ logging.basicConfig(level=logging.DEBUG)
 logging.getLogger('pymongo').setLevel(logging.WARNING) # Hide pymongo output when debugging
 
 
+# TODO: make it possible to extract parameters from seg_config rather than creating or providing them
+
 def segment_dataset(
                 project_dir,
                 project_prefix,
@@ -160,16 +162,25 @@ def segment_dataset(
     num_cache_workers  = seg_config['pred_config']['num_cache_workers']
     write_affs         = seg_config['pred_config']['write_affs']
     write_lsds         = seg_config['pred_config']['write_lsds']
-
+    
     context_px           = seg_config['frag_config']['context_px']
     fragments_in_xy      = seg_config['frag_config']['fragments_in_xy']
     epsilon_agglomerate  = seg_config['frag_config']['epsilon_agglomerate']
     filter_fragments     = seg_config['frag_config']['filter_fragments']
     min_seed_distance    = seg_config['frag_config']['min_seed_distance']
+    lsd_sigma            = seg_config['frag_config'].get('lsd_sigma')
+    mode                 = seg_config['frag_config'].get('mode', 'affs')
 
     agglomerate_threshold      = seg_config['agglo_config']['threshold']
     edges_collection_basename  = seg_config['agglo_config']['edges_collection_basename']
     merge_function             = seg_config['agglo_config']['merge_function']
+
+    if mode == 'affs':
+        pred_dataset = affs_dataset
+    elif mode == 'lsds':
+        pred_dataset = lsds_dataset
+    else:
+        raise ValueError(f'Invalid fragment/agglomerate mode: {mode}')
 
     # MongoDB
     client = MongoClient(db_host)
@@ -210,7 +221,6 @@ def segment_dataset(
                             GPU_pool=GPU_pool):
             sys.exit('Interrupted or something went wrong')
 
-
     ### Fragments ###
     if 'fragment' not in todo:
         logging.info('Skipping fragments.')
@@ -225,13 +235,13 @@ def segment_dataset(
                 logging.debug('STARTING OVER BUT DB CHECK BLOCK FRAGMENTS ALREADY EMPTY')
         print('\n----- FRAGMENTS -----')
         if not extract_fragments_blockwise(
-                            output_path=output_path,
+                            pred_path=output_path,
                             chunk_voxel_size=chunk_voxel_size,
                             context_px=context_px,
                             db_name=db_name,
                             num_workers=num_workers,
                             db_host=db_host,
-                            affs_dataset=affs_dataset,
+                            pred_dataset=pred_dataset,
                             fragments_path=fragments_path,
                             fragments_dataset=fragments_dataset,
                             mask_path=mask_path,
@@ -239,6 +249,7 @@ def segment_dataset(
                             epsilon_agglomerate=epsilon_agglomerate,
                             filter_fragments=filter_fragments,
                             min_seed_distance=min_seed_distance,
+                            lsd_sigma=lsd_sigma,
                             replace_sections=None):
             sys.exit('Interrupted or something went wrong')
     
@@ -257,18 +268,19 @@ def segment_dataset(
                 logging.debug('STARTING OVER BUT DB CHECK BLOCK AGGLOMERATION ALREADY EMPTY')
         print('\n----- AGGLOMERATION -----')
         if not agglomerate_blockwise(
-                            output_path=output_path,
+                            pred_path=output_path,
                             chunk_voxel_size=chunk_voxel_size,
                             context_px=context_px,
                             db_name=db_name,
                             merge_function=merge_function,
                             num_workers=num_workers,
                             db_host=db_host,
-                            affs_dataset=affs_dataset,
+                            pred_dataset=pred_dataset,
                             fragments_path=fragments_path,
                             fragments_dataset=fragments_dataset,
                             edges_collection=edges_collection_basename,
                             threshold=agglomerate_threshold,
+                            lsd_sigma=lsd_sigma
                         ):
             sys.exit('Interrupted or something went wrong')
         
