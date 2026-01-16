@@ -60,7 +60,7 @@ def segment_dataset(
     ds = open_ds(os.path.join(raw_path, raw_dataset), 'r') # Open here to test if it exists before we create any file
 
     # Store name will be same as the raw data
-    store_name = os.path.basename(raw_path).rstrip('.zarr')
+    store_name = os.path.basename(raw_path).removesuffix('.zarr')
     # Add prefix and suffix if provided
     store_name = project_prefix + '_' + store_name if project_prefix else store_name
     store_name = store_name + '_' + volume_suffix if volume_suffix else store_name
@@ -92,7 +92,7 @@ def segment_dataset(
         store_path = os.path.join(project_dir, store_name)
         index = str(len(glob(store_path + '*')))
     else:
-        store_path = output_path.rstrip('.zarr')
+        store_path = output_path.removesuffix('.zarr')
 
     # Continue or new project
     if not continue_previous or index == '0':
@@ -107,7 +107,7 @@ def segment_dataset(
             
             os.makedirs(output_path, exist_ok=True)
         
-        db_name = os.path.basename(output_path).rstrip('.zarr')
+        db_name = os.path.basename(output_path).removesuffix('.zarr')
         fragments_path = output_path if fragments_path is None else os.path.abspath(fragments_path)
 
         # Get config parameters
