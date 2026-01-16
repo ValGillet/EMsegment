@@ -3,7 +3,7 @@ from lsd.post.fragments import watershed_from_affinities, watershed
 from funlib.geometry import Coordinate
 from funlib.persistence import Array
 from funlib.segment.arrays import relabel, replace_values
-from scipy.ndimage import center_of_mass
+from scipy import ndimage
 import logging
 import numpy as np
 import waterz
@@ -11,7 +11,7 @@ import waterz
 logger = logging.getLogger(__name__)
 
 '''
-Code extracted from lsd by Funke lab: https://github.com/funkelab/lsd/tree/master/lsd/post
+Code extracted from lsd by Funke lab: https://github.com/funkelab/lsd/blob/master/lsd/post/parallel_fragments.py
 '''
 
 def watershed_in_block_affs(
@@ -27,20 +27,6 @@ def watershed_in_block_affs(
         filter_fragments=0.0,
         min_seed_distance=10,
         replace_sections=None):
-    '''
-
-    Args:
-
-        filter_fragments (float):
-
-            Filter fragments that have an average affinity lower than this
-            value.
-
-        min_seed_distance (int):
-
-            Controls distance between seeds in the initial watershed. Reducing
-            this value improves downsampled segmentation.
-    '''
 
     total_roi = affs.roi
     voxel_size = affs.voxel_size
@@ -88,7 +74,7 @@ def watershed_in_block_affs(
 
         for fragment, mean in zip(
                 fragment_ids,
-                mean(
+                ndimage.mean(
                     average_affs,
                     fragments_data,
                     fragment_ids)):
@@ -186,7 +172,7 @@ def watershed_in_block_affs(
         fragment: block.write_roi.get_offset() + voxel_size*Coordinate(center)
         for fragment, center in zip(
             fragment_ids,
-            center_of_mass(fragments, fragments, fragment_ids))
+            ndimage.center_of_mass(fragments, fragments, fragment_ids))
         if not np.isnan(center[0])
     }
 
@@ -213,20 +199,6 @@ def watershed_in_block_lsds(
         fragments_out,
         num_voxels_in_block,
         mask=None):
-    '''
-
-    Args:
-
-        filter_fragments (float):
-
-            Filter fragments that have an average affinity lower than this
-            value.
-
-        min_seed_distance (int):
-
-            Controls distance between seeds in the initial watershed. Reducing
-            this value improves downsampled segmentation.
-    '''
 
     total_roi = lsds.roi
     voxel_size = lsds.voxel_size
@@ -287,7 +259,7 @@ def watershed_in_block_lsds(
         fragment: block.write_roi.get_offset() + voxel_size*Coordinate(center)
         for fragment, center in zip(
             fragment_ids,
-            center_of_mass(fragments, fragments, fragment_ids))
+            ndimage.center_of_mass(fragments, fragments, fragment_ids))
         if not np.isnan(center[0])
     }
 
