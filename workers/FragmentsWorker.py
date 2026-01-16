@@ -1,7 +1,6 @@
 import daisy
 import json
 import logging
-import os
 import pymongo
 import sys
 import time
@@ -9,7 +8,7 @@ import time
 from daisy.block import BlockStatus
 from funlib.persistence import open_ds
 from lsd.post.persistence.mongodb_rag_provider import MongoDbRagProvider
-from lsd.post.parallel_fragments import watershed_in_block
+from emsegment.utils.lsds import watershed_in_block_affs, watershed_in_block_lsds
 
 
 logging.basicConfig(level = logging.DEBUG)
@@ -25,24 +24,29 @@ def extract_fragments_worker(input_config):
     logging.info(config)
     
     # Read config (obsolete if with main script)
-    affs_path            = config['affs_path']
+    pred_path            = config['pred_path']
     fragments_path       = config['fragments_path']
     db_host              = config['db_host']
     db_name              = config['db_name']
-    context              = config['context']
     num_voxels_in_block  = config['num_voxels_in_block']
+    mask_path            = config['mask_path']
+    mode                 = config['mode']
+
+    # For affinities
+    context              = config['context']
     fragments_in_xy      = config['fragments_in_xy']
     epsilon_agglomerate  = config['epsilon_agglomerate']
     filter_fragments     = config['filter_fragments']
     replace_sections     = config['replace_sections']    
     min_seed_distance    = config['min_seed_distance']
-    mask_path            = config['mask_path']
+
+    # For lsds
+    sigma = config.get('lsd_sigma', 60.0)
     
     # Open files
-    logging.info(f'Reading affs from {affs_path}')
-
-    affs = open_ds(affs_path, mode = 'r')
-    
+    logging.info(f'Reading predictions from {pred_path}')
+    pred = open_ds(pred_path, mode = 'r')
+   
     logging.info(f'Reading fragments from {fragments_path}')
     fragments = open_ds(fragments_path, mode='r+')
 
@@ -58,6 +62,34 @@ def extract_fragments_worker(input_config):
                                       host=db_host,
                                       mode='r+')
     logging.info('RAG DB opened')
+
+    if mode == 'affs':
+        assert pred.shape[0] == 3, f'Unexpected shape for the affinity dataset: {pred.shape}'
+        watershed_fun = watershed_in_block_affs
+        args = {
+            'affs': pred,
+            'context': context,
+            'rag_provider': rag_provider,
+            'fragments_out': fragments,
+            'num_voxels_in_block': num_voxels_in_block,
+            'mask': mask,
+            'fragments_in_xy': fragments_in_xy,
+            'epsilon_agglomerate': epsilon_agglomerate,
+            'filter_fragments': filter_fragments,
+            'min_seed_distance': min_seed_distance,
+            'replace_sections': replace_sections
+        }
+    elif mode == 'lsds':
+        assert pred.shape[0] == 10, f'Unexpected shape for the LSDs dataset: {pred.shape}'
+        watershed_fun = watershed_in_block_lsds
+        args = {
+            'lsds': pred,
+            'sigma': sigma,
+            'rag_provider': rag_provider,
+            'fragments_out': fragments,
+            'num_voxels_in_block': num_voxels_in_block,
+            'mask': mask
+        }
 
     # Open extracted blocks DB
     client = pymongo.MongoClient(db_host)
@@ -77,20 +109,8 @@ def extract_fragments_worker(input_config):
             logging.info('Starting WATERSHED')
 
             try:
-                watershed_in_block(
-                    affs,
-                    block,
-                    context,
-                    rag_provider,
-                    fragments,
-                    num_voxels_in_block=num_voxels_in_block,
-                    fragments_in_xy=fragments_in_xy,
-                    min_seed_distance=min_seed_distance,
-                    mask=mask,
-                    epsilon_agglomerate=epsilon_agglomerate,
-                    filter_fragments=filter_fragments,
-                    replace_sections=replace_sections
-                    )
+                args['block'] = block
+                watershed_fun(**args)
             except Exception as e:
                 block.status = BlockStatus.FAILED
                 raise(e)

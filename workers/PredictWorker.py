@@ -10,10 +10,8 @@ from gunpowder import *
 from gunpowder.torch import *
 from torch.nn import Module
 
-
 logging.getLogger('gunpowder.nodes.zarr_write').setLevel(logging.DEBUG)
 logging.getLogger('gunpowder.profiling').setLevel(logging.INFO)
-
 
 class AffsLsdModel(Module):
 
@@ -138,7 +136,7 @@ def predict(
         )
 
     #pipeline += IntensityScaleShift(affs, 255, 0)
-    pipeline += Squeeze([affs])
+    pipeline += Squeeze([affs, lsds])
     pipeline += ZarrWrite(
             dataset_names=write_datasets,
             store=output_path

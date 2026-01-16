@@ -2,8 +2,6 @@ import daisy
 import hashlib
 import json
 import logging
-import lsd
-import numpy as np
 import os
 import pymongo
 import sys
@@ -20,32 +18,42 @@ logging.getLogger('pymongo').setLevel(logging.WARNING) # Hide pymongo output whe
 
 
 def agglomerate_blockwise(
-                affs_path,
+                pred_path,
                 chunk_voxel_size,
                 context_px,
                 db_name,
                 merge_function,
                 num_workers,
                 db_host=None,
-                affs_dataset='pred_affs',
+                pred_dataset='pred_affs',
                 fragments_path=None,
                 fragments_dataset='frags',
                 edges_collection='edges',
                 threshold=10,
-                **kwargs
+                lsd_sigma=60.0
                ):
 
-    fragments_path = affs_path if fragments_path is None else fragments_path
-    edges_collection = f'{edges_collection}_{merge_function}'
+    fragments_path = pred_path if fragments_path is None else fragments_path
 
-    logging.info(f'Reading affs from {affs_path}')
+    logging.info(f'Reading predictions from {pred_path}')
     logging.info(f'Reading fragments from {fragments_path}')
-    affs = open_ds(os.path.join(affs_path, affs_dataset), mode = 'r')
+    pred = open_ds(os.path.join(pred_path, pred_dataset), mode = 'r')
     fragments = open_ds(os.path.join(fragments_path, fragments_dataset), mode = 'r')
 
+    if pred.shape[0] == 3:
+        mode = 'affs'
+        edges_collection = f'{edges_collection}_{merge_function}'
+        blocks_collection_name = 'blocks_agglomerated_' + merge_function
+    elif pred.shape[0] == 10:
+        mode = 'lsds'
+        edges_collection = f'{edges_collection}_lsd'
+        blocks_collection_name = 'blocks_agglomerated_lsd'
+    else:
+        raise ValueError(f'Unexpected shape for prediction dataset: {pred.shape}')
+
     # Prepare variables
-    chunk_size = Coordinate(chunk_voxel_size) * affs.voxel_size
-    context = Coordinate(context_px) * affs.voxel_size
+    chunk_size = Coordinate(chunk_voxel_size) * pred.voxel_size
+    context = Coordinate(context_px) * pred.voxel_size
     total_roi = fragments.roi
 
     read_roi = Roi((0,0,0), chunk_size).grow(context, context)
@@ -54,7 +62,6 @@ def agglomerate_blockwise(
     # Prepare MongoDB to log blocks
     client = pymongo.MongoClient(db_host)
     db = client[db_name]
-    blocks_collection_name = 'blocks_agglomerated_' + merge_function
     if blocks_collection_name not in db.list_collection_names():
         blocks_agglomerated = db[blocks_collection_name]
         blocks_agglomerated.create_index(
@@ -68,15 +75,17 @@ def agglomerate_blockwise(
                     read_roi=read_roi,
                     write_roi=write_roi,
                     process_function=lambda: start_worker(
-                                                        affs_path,
-                                                        affs_dataset,
+                                                        pred_path,
+                                                        pred_dataset,
                                                         fragments_path,
                                                         fragments_dataset,
                                                         db_host,
                                                         db_name,
                                                         edges_collection,
                                                         merge_function,
-                                                        threshold
+                                                        threshold,
+                                                        lsd_sigma,
+                                                        mode
                                                         ),
                     check_function=lambda b: check_block(
                                         b, 
@@ -92,11 +101,11 @@ def agglomerate_blockwise(
         doc = {
             'task': 'agglomeration',
             'date': date.today().strftime('%d%m%Y'),
-            'voxel_size': list(affs.voxel_size),
+            'voxel_size': list(pred.voxel_size),
             'size_roi_nm': list(total_roi.get_shape()),
             'start_roi_nm': list(total_roi.begin),
-            'affs_path': affs_path,
-            'affs_dataset': affs_dataset,
+            'pred_path': pred_path,
+            'pred_dataset': pred_dataset,
             'fragments_path': fragments_path,
             'fragments_dataset': fragments_dataset,
             'chunk_voxel_size': chunk_voxel_size,
@@ -104,14 +113,16 @@ def agglomerate_blockwise(
             'merge_function': merge_function,
             'edges_collection': edges_collection,
             'threshold': threshold,
+            'lsd_sigma': lsd_sigma,
+            'mode': mode
             }
         db['info_segmentation'].insert_one(doc)
     
     return done
 
 def start_worker(
-                 affs_path,
-                 affs_dataset,
+                 pred_path,
+                 pred_dataset,
                  fragments_path,
                  fragments_dataset,
                  db_host,
@@ -119,13 +130,14 @@ def start_worker(
                  edges_collection,
                  merge_function,
                  threshold,
-                 **kwargs):
+                 lsd_sigma,
+                 mode):
     
     daisy_context = daisy.Context.from_env()
     worker_id = int(daisy_context.get('worker_id'))
     logging.info(f'Worker {worker_id} started...')
 
-    worker_script = '/mnt/hdd1/SRC/EMpipelines/EMsegment/emsegment/workers/AgglomerateWorker.py'
+    worker_script = os.path.join(os.path.dirname(__file__), 'workers', 'AgglomerateWorker.py')
 
     output_dir = os.path.join(os.path.dirname(worker_script), 'tmp_extract_fragments_blockwise')
     os.makedirs(output_dir, exist_ok=True)
@@ -134,15 +146,17 @@ def start_worker(
     log_err = os.path.join(output_dir, 'agglomerate_blockwise_%d.err' %worker_id)
 
     config = {
-            'affs_path': affs_path,
-            'affs_dataset': affs_dataset,
+            'pred_path': pred_path,
+            'pred_dataset': pred_dataset,
             'fragments_path': fragments_path,
             'fragments_dataset': fragments_dataset,
             'db_host': db_host,
             'db_name': db_name,
             'edges_collection': edges_collection,
             'merge_function': merge_function,
-            'threshold': threshold
+            'threshold': threshold,
+            'lsd_sigma': lsd_sigma,
+            'mode': mode
             }
 
     config_str = ''.join(['%s'%(v,) for v in config.values()])

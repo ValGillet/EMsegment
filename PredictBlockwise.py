@@ -120,6 +120,7 @@ def predict_blockwise(
 
     # Prepare output
     if write_affs:
+        store_path = os.path.join(output_path, affs_dataset)
         affs = prepare_ds(
                         store=os.path.join(output_path, affs_dataset),
                         shape=(3, *output_roi_shape),
@@ -129,19 +130,22 @@ def predict_blockwise(
                         units=['nm','nm','nm'],
                         mode='a',
                         dtype=np.float32,
-                        chunk_shape=Coordinate(3, *output_shape) # Chunk shape needs to be write-aligned or we end up with black patches
+                        chunk_shape=Coordinate(3, *output_shape), # Chunk shape needs to be write-aligned or we end up with black patches
+                        custom_metadata={'resolution': list(voxel_size)} # For compatibility 
                         )
     if write_lsds:
+        store_path = os.path.join(output_path, lsds_dataset)
         lsds = prepare_ds(
                         store=os.path.join(output_path, lsds_dataset),
-                        shape=(11, *output_roi_shape),
+                        shape=(10, *output_roi_shape),
                         offset=total_roi.begin,
                         voxel_size=voxel_size,
                         axis_names=['c^','z','y','x'],
                         units=['nm','nm','nm'],
                         mode='a',
                         dtype=np.float32,
-                        chunk_shape=Coordinate(11, *output_shape) # Chunk shape needs to be write-aligned or we end up with black patches
+                        chunk_shape=Coordinate(11, *output_shape), # Chunk shape needs to be write-aligned or we end up with black patches
+                        custom_metadata={'resolution': list(voxel_size)} # For compatibility 
                         )
     
     logging.info(f'Source roi: {total_roi}')
@@ -203,7 +207,7 @@ def predict_blockwise(
         doc = {
             'task': 'prediction',
             'date': date.today().strftime('%d%m%Y'),
-            'voxel_size': list(affs.voxel_size),
+            'voxel_size': list(source.voxel_size),
             'size_roi_nm': list(total_roi.get_shape()),
             'start_roi_nm': list(total_roi.begin),
             'model_path': model_path,
