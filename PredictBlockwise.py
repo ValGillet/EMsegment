@@ -4,6 +4,7 @@ import json
 import logging
 import numpy as np
 import os
+
 import pymongo
 import sys
 import time
@@ -12,7 +13,6 @@ from datetime import date
 from funlib.persistence import open_ds, prepare_ds
 from funlib.persistence.arrays.metadata import MetaDataFormat
 from funlib.geometry import Roi, Coordinate
-from zarr import ThreadSynchronizer
 
 from emsegment.utils.block_wise_process import check_block, daisy_call
 
@@ -20,14 +20,22 @@ logging.basicConfig(level=logging.INFO)
 logging.getLogger('pymongo').setLevel(logging.WARNING) # Hide pymongo output when debugging
 
 
-def get_mask_roi(raw_path, db_host=None):
+def get_mask_roi(raw_path, db_name=None, db_host=None, ignore_missing=True):
 
     client = pymongo.MongoClient(db_host)
-    db_mask = 'mask_info_' + raw_path.split('/')[-1].rstrip('.zarr')
 
-    assert db_mask in client.list_database_names()
+    if db_name is None:
+        db_name = 'mask_info_' + raw_path.split('/')[-1].rstrip('.zarr')
+    else:
+        db_name = db_name
 
-    db = client[db_mask]
+    if not db_name in client.list_database_names():
+        if ignore_missing:
+            return None
+        else:
+            raise ValueError(f'Mask database missing: {db_name}')
+
+    db = client[db_name]
     blocks_data = db['block_data']
 
     top_left_nm = [d['top_left_nm'] for d in blocks_data.find({'block_masked_in':1})]
@@ -107,12 +115,14 @@ def predict_blockwise(
 
     if mask_path is not None:
         # Either use mask info from the db, or crop to a given bbox ([begin_zyx, shape_zyx])
-        masked_roi = get_mask_roi(raw_path, db_host)
+        masked_roi = get_mask_roi(raw_path, db_host=db_host, ignore_missing=True)
         
-        logging.info(f'Cropping ROI of source: {source.roi}')
-        logging.info(f'To ROI of mask: {masked_roi}')
-
-        total_roi = total_roi.intersect(masked_roi)
+        if masked_roi is None:
+            logging.info('Mask database missing. Will use the full ROI.')
+        else:
+            logging.info(f'Cropping ROI of source: {source.roi}')
+            logging.info(f'To ROI of mask: {masked_roi}')
+            total_roi = total_roi.intersect(masked_roi)
     
     # Prepare variables
     voxel_size = source.voxel_size
