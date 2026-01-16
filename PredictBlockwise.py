@@ -10,6 +10,7 @@ import time
 
 from datetime import date
 from funlib.persistence import open_ds, prepare_ds
+from funlib.persistence.arrays.metadata import MetaDataFormat
 from funlib.geometry import Roi, Coordinate
 from zarr import ThreadSynchronizer
 
@@ -83,6 +84,18 @@ def predict_blockwise(
     
     # Prepare raw data 
     source = open_ds(os.path.join(raw_path, raw_dataset), mode='r')
+    if source.voxel_size == (1,1,1):
+        # If default resolution is set, it could be that a different keyword is being used
+        source = open_ds(os.path.join(raw_path, raw_dataset), mode='r', 
+                         metadata_format=MetaDataFormat(voxel_size_attr='resolution'))
+        if source.voxel_size == (1,1,1):
+            logging.warning('Voxel size appears to be missing from input dataset attributes. Using (1,1,1).')
+    
+    if not os.path.exists(os.path.join(raw_path, '.zgroup')):
+        # gunpowder node ZarrSource needs the .zgroup file
+        with open(os.path.join(raw_path, '.zgroup'), 'w') as f:
+            json.dump({'zarr_format': 2}, f)
+
     total_roi = source.roi
     
     # Constrain start and/or size to what was provided
