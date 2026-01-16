@@ -263,8 +263,8 @@ def start_predict_worker(
     worker_id = int(daisy_context.get('worker_id'))
     GPU_ID = GPU_pool[worker_id]
 
-    worker_script = '/mnt/hdd1/SRC/EMpipelines/EMsegment/emsegment/workers/PredictWorker.py'
-    
+    worker_script = os.path.join(os.path.dirname(__file__), 'workers', 'PredictWorker.py')
+
     output_dir = os.path.join(os.path.dirname(worker_script), 'tmp_predict_blockwise')
     os.makedirs(output_dir, exist_ok=True)
     
