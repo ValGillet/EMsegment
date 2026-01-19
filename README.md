@@ -1,6 +1,11 @@
 # EMsegment
 
-A Python package for 3D electron microscopy (EM) image segmentation using deep learning. Implements a distributed, block-wise processing pipeline that segments volumetric EM data through three stages: prediction, fragment extraction, and agglomeration.
+A Python package for 3D electron microscopy (EM) image segmentation using deep learning. 
+
+Implements a pipeline based on the [local shape descriptor (LSDs)](https://github.com/funkelab/lsd/tree/master) library.
+
+See original scripts here: https://github.com/funkelab/lsd/tree/master/lsd/tutorial/scripts
+
 
 ## Overview
 
@@ -10,7 +15,7 @@ EMsegment processes large EM volumes by:
 2. **Fragments**: Applying watershed segmentation to create supervoxels from predictions
 3. **Agglomeration**: Merging fragments into final segments using a region adjacency graph (RAG)
 
-Each stage uses [daisy](https://github.com/funkelab/daisy) for distributed block-wise processing with MongoDB for progress tracking, enabling fault-tolerant processing of arbitrarily large volumes.
+Each stage uses [daisy](https://github.com/funkelab/daisy) for distributed block-wise processing with MongoDB for progress tracking.
 
 ## Installation
 
@@ -37,8 +42,7 @@ python emsegment/Segment.py \
   -m emsegment/config/model_config.json \
   -c 8 \
   --GPU 0 1 \
-  --seg-config emsegment/seg_config.json \
-  --db-host mongodb://localhost:27017
+  --seg-config emsegment/seg_config.json
 ```
 
 ### Individual Stages
@@ -52,14 +56,6 @@ python emsegment/Segment.py ... --todo fragment
 
 # Agglomeration only (requires fragments)
 python emsegment/Segment.py ... --todo agglomerate
-```
-
-### Extract Final Segments
-
-After agglomeration, extract segments at different thresholds:
-
-```bash
-python emsegment/FindSegments.py config.json
 ```
 
 ## Configuration
@@ -116,7 +112,6 @@ python emsegment/FindSegments.py config.json
 - **Input**: Zarr containers with raw EM data
 - **Predictions**: 4D arrays (channels, z, y, x) - 3 channels for affinities, 10 for LSDs
 - **Fragments**: 3D uint64 label arrays
-- **Output**: Lookup tables (LUTs) mapping fragment IDs to segment IDs
 
 ## Project Structure
 
@@ -135,9 +130,10 @@ emsegment/
 ## Acknowledgments
 
 Built on tools from the [Funke Lab](https://github.com/funkelab):
-- [daisy](https://github.com/funkelab/daisy) - Distributed processing
-- [gunpowder](https://github.com/funkelab/gunpowder) - Data augmentation
 - [lsd](https://github.com/funkelab/lsd) - Local shape descriptors
+- [daisy](https://github.com/funkelab/daisy) - Distributed processing
+- [funlib.persistence](https://github.com/funkelab/funlib.persistence) - Interface with zarr containers
+- [funlib.geometry](https://github.com/funkelab/funlib.geometry) - Coordinates and Roi operations
 
 ## License
 
