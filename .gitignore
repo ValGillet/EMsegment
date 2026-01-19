@@ -7,8 +7,9 @@ tmp*/
 *.ipynb
 *.zarr
 .vscode
-utils/nglancer.py
+emsegment/utils/nglancer.py
 notebooks/
 output/
 post_process/
 CLAUDE.md
+build
