@@ -229,8 +229,9 @@ def segment_dataset(
     else:
         if start_over:
             try:
-                db.blocks_predicted.drop()
-                logging.info('Fragments progress was wiped.')
+                db.blocks_fragments.drop()
+                db.nodes.drop()
+                logging.info('Fragments progress and nodes were wiped.')
             except:
                 logging.debug('STARTING OVER BUT DB CHECK BLOCK FRAGMENTS ALREADY EMPTY')
         print('\n----- FRAGMENTS -----')
@@ -262,7 +263,8 @@ def segment_dataset(
     else:
         if start_over:
             try:
-                db.blocks_predicted.drop()
+                db['blocks_agglomerated_' + merge_function].drop()
+                db['edges_' + merge_function].drop()
                 logging.info('Prediction progress was wiped.')
             except:
                 logging.debug('STARTING OVER BUT DB CHECK BLOCK AGGLOMERATION ALREADY EMPTY')
