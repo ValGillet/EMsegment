@@ -2,9 +2,13 @@ config/
 daisy_logs/
 test/
 __pycache__/
-workers/tmp*
+tmp*/
 *.egg-info
 *.ipynb
 *.zarr
 .vscode
 utils/nglancer.py
+notebooks/
+output/
+post_process/
+CLAUDE.md
