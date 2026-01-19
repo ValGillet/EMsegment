@@ -37,9 +37,98 @@ def extract_fragments_blockwise(
                       min_seed_distance=5,
                       lsd_sigma=60.0,
                       replace_sections=None):
-    
     '''
-    min_seed_distance: Distance between seeds for watershedding. Influences the density of supervoxels
+    Extract fragments (supervoxels) from predictions using watershed segmentation.
+    Based on https://github.com/funkelab/lsd/blob/master/lsd/tutorial/scripts/02_extract_fragments_blockwise.py
+
+    Parameters
+    ----------
+    pred_path : str
+        Path to zarr container with prediction data (affinities or LSDs).
+    chunk_voxel_size : list of int
+        Block size in voxels [z, y, x] for processing.
+    context_px : list of int
+        Context (overlap) size in voxels [z, y, x] for block boundaries.
+    db_name : str
+        MongoDB database name for tracking block completion.
+    num_workers : int
+        Number of CPU worker processes for parallel watershed.
+    db_host : str or None, optional
+        MongoDB connection URI. If None, uses localhost. Default: None
+    pred_dataset : str, optional
+        Name of dataset in pred_path containing predictions. Auto-detects mode:
+        3 channels = affinities, 10 channels = LSDs. Default: 'pred_affs'
+    fragments_path : str or None, optional
+        Path to output zarr for fragments. If None, uses pred_path. Default: None
+    fragments_dataset : str, optional
+        Name of output dataset for fragments. Default: 'frags'
+    mask_path : str or None, optional
+        Path to zarr containing binary mask to constrain watershedding. Default: None
+    mask_dataset : str, optional
+        Name of mask dataset in mask_path. Default: 'mask'
+    fragments_in_xy : bool, optional
+        If True, perform 2D watershed on XY slices. If False, 3D watershed. Default: True
+    epsilon_agglomerate : float, optional
+        Initial agglomeration threshold applied during watershed to merge fragments
+        below this threshold. Default: 0 (no merging)
+    filter_fragments : float, optional
+        Size threshold for filtering small fragments (in voxels). Default: 0 (no filtering)
+    min_seed_distance : int, optional
+        Minimum distance between watershed seeds in voxels. Lower values create denser
+        supervoxels. Default: 5
+    lsd_sigma : float, optional
+        Sigma parameter for Gaussian smoothing when using LSD mode, in nanometers.
+        Only used if pred_dataset contains LSDs. Default: 60.0
+    replace_sections : list or None, optional
+        List of Z-sections to replace/reprocess. Default: None (process all)
+
+    Returns
+    -------
+    bool
+        True if all blocks completed successfully, False otherwise.
+
+    Notes
+    -----
+    - Automatically detects mode from prediction shape: 3 channels=affs, 10 channels=LSDs
+    - Fragments are stored as uint64 labels
+    - MongoDB collection 'blocks_fragments' tracks completion status
+    - Metadata written to 'info_segmentation' collection upon successful completion
+    - Workers write logs to: workers/tmp_extract_fragments_blockwise/extract_fragments_blockwise_<id>.{out,err}
+
+    Examples
+    --------
+    Extract fragments using affinity predictions with 2D watershed:
+
+    >>> extract_fragments_blockwise(
+    ...     pred_path='/data/predictions.zarr',
+    ...     chunk_voxel_size=[100, 500, 500],
+    ...     context_px=[10, 50, 50],
+    ...     db_name='my_fragments',
+    ...     num_workers=8,
+    ...     pred_dataset='pred_affs',
+    ...     fragments_in_xy=True,
+    ...     min_seed_distance=5
+    ... )
+
+    Extract denser supervoxels with smaller seed distance and filtering:
+
+    >>> extract_fragments_blockwise(
+    ...     pred_path='/data/predictions.zarr',
+    ...     chunk_voxel_size=[100, 500, 500],
+    ...     context_px=[10, 50, 50],
+    ...     db_name='my_fragments',
+    ...     num_workers=8,
+    ...     min_seed_distance=3,
+    ...     filter_fragments=0.5,
+    ...     epsilon_agglomerate=0.05
+    ... )
+
+    See Also
+    --------
+    workers.FragmentsWorker.extract_fragments_worker : Worker that performs watershed
+    utils.lsds.watershed_in_block_affs : Affinity-based watershed implementation
+    utils.lsds.watershed_in_block_lsds : LSD-based watershed implementation
+    start_frag_worker : Spawns worker subprocesses
     '''
     
     fragments_path = pred_path if fragments_path is None else fragments_path
@@ -172,6 +261,51 @@ def start_frag_worker(
                  replace_sections,
                  lsd_sigma,
                  mode):
+    '''
+    Spawn a FragmentsWorker subprocess for block-wise watershed segmentation.
+    Called by daisy for each worker process. 
+
+    Parameters
+    ----------
+    pred_path : str
+        Full path to prediction dataset (e.g., '/path/to/data.zarr/pred_affs').
+    fragments_path : str
+        Full path to output fragments dataset (e.g., '/path/to/data.zarr/frags').
+    db_host : str
+        MongoDB connection URI.
+    db_name : str
+        MongoDB database name for tracking progress.
+    context : funlib.geometry.Coordinate
+        Context size in physical units (nm) for block overlap.
+    fragments_in_xy : bool
+        If True, perform 2D watershed on XY slices. If False, 3D watershed.
+    num_voxels_in_block : int
+        Total number of voxels in write ROI (used for fragment ID offset).
+    epsilon_agglomerate : float
+        Initial agglomeration threshold for merging fragments during watershed.
+    mask_path : str or None
+        Full path to mask dataset if using masking, None otherwise.
+    filter_fragments : float
+        Size threshold for filtering small fragments (in voxels).
+    min_seed_distance : int
+        Minimum distance between watershed seeds in voxels.
+    replace_sections : list or None
+        List of Z-sections to replace/reprocess.
+    lsd_sigma : float
+        Sigma for Gaussian smoothing when using LSD mode (in nm).
+    mode : str
+        Watershed mode, either 'affs' or 'lsds'.
+
+    Notes
+    -----
+    - Worker ID is obtained from daisy.Context.from_env()
+    - Worker logs written to: workers/tmp_extract_fragments_blockwise/extract_fragments_blockwise_<id>.{out,err}
+    - Configuration file persists for debugging
+
+    See Also
+    --------
+    workers.FragmentsWorker.extract_fragments_worker : Worker subprocess implementation
+    '''
    
     daisy_context = daisy.Context.from_env()
     worker_id = int(daisy_context.get('worker_id'))

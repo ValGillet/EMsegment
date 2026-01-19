@@ -49,6 +49,151 @@ def segment_dataset(
                 continue_previous=False,
                 return_config=False
                    ):
+    '''
+    Execute the 3-stage segmentation pipeline: prediction, fragments, and agglomeration.
+
+    1. Prediction: Run neural networks to generate affinity maps and/or local shape descriptors
+    2. Fragments: Apply watershed segmentation to create supervoxels
+    3. Agglomeration: Merge fragments into final segments using a region adjacency graph
+
+    Each stage can be run independently by specifying the 'todo' parameter, but requires the previous stage to have been completed.
+
+    Parameters
+    ----------
+    project_dir : str
+        Directory where all outputs will be saved. Creates zarr stores and config files here.
+    project_prefix : str
+        Prefix added to output zarr file names for organization.
+    model_config : str or dict
+        Path to JSON file containing model configuration, or a dict with model parameters.
+        Specifies model path and input/output shapes.
+    input_path : str
+        Path to input zarr container with raw data to segment.
+    GPU_pool : list of int
+        List of CUDA device IDs to use for prediction (e.g., [0, 1, 2]).
+    num_workers : int
+        Number of workers for parallel fragment extraction and agglomeration.
+    seg_config : str, optional
+        Path to JSON file with segmentation parameters for all three stages.
+        Default: 'seg_config.json'
+    todo : list of str, optional
+        Which pipeline stages to execute. Any combination of ['predict', 'fragment', 'agglomerate'].
+        Default: all three stages.
+    chunk_voxel_size : list of int, optional
+        Chunk size in voxels [Z, Y, X] for distributed processing.
+        Default: [100, 500, 500]
+    volume_suffix : str, optional
+        Suffix appended to output zarr names for versioning. Default: empty string.
+    roi_start : list of int or None, optional
+        Starting coordinates [Z, Y, X] in nanometers for region of interest.
+        If None, starts at the offset of input volume. Default: None
+    roi_size : list of int or None, optional
+        Size [Z, Y, X] in nanometers for region of interest.
+        If None, determined from intersection with input volume based on provided offset. Default: None
+    db_host : str or None, optional
+        MongoDB connection URI (e.g., 'mongodb://localhost:27017').
+        If None, uses localhost. Default: None
+    output_path : str or None, optional
+        Custom path for output zarr container. If None, auto-generated from input name.
+        Default: None
+    fragments_path : str or None, optional
+        Custom path for fragments zarr. If None, stored in same container as predictions.
+        Default: None
+    use_mask : bool, optional
+        Whether to use a binary mask for segmentation (1=segment, 0=ignore). Default: False
+    mask_path : str or None, optional
+        Path to zarr containing mask dataset. If None but use_mask=True, looks in input_path.
+        Default: None
+    raw_dataset : str, optional
+        Name of dataset in input zarr containing raw data. Default: 'raw'
+    mask_dataset : str, optional
+        Name of dataset containing binary mask. Default: 'mask'
+    affs_dataset : str, optional
+        Name of dataset for affinity predictions output. Default: 'pred_affs'
+    lsds_dataset : str, optional
+        Name of dataset for LSD predictions output. Default: 'pred_lsds'
+    fragments_dataset : str, optional
+        Name of dataset for fragment supervoxels output. Default: 'frags'
+    start_over : bool, optional
+        If True, clears MongoDB progress and restarts from scratch, only affects tasks in the todo list. 
+        Default: False
+    continue_previous : bool, optional
+        If True, continues the most recent project in project_dir based on indices. 
+        seg_config at the root of the output_path will be used. 
+        Default: False
+    return_config : bool, optional
+        If True, returns the seg_config dict. Default: False
+
+    Returns
+    -------
+    dict or None
+        If return_config=True, returns the segmentation configuration dictionary.
+        Otherwise returns None.
+
+    Raises
+    ------
+    ValueError
+        If todo contains invalid stage names (must be 'predict', 'fragment', or 'agglomerate').
+    SystemExit
+        If any pipeline stage fails or is interrupted.
+
+    Notes
+    -----
+    - ROI coordinates (roi_start, roi_size) are in physical units (nanometers), automatically
+      snapped to voxel grid boundaries
+    - Each stage checks MongoDB before running; skips if already completed (unless start_over=True)
+    - Configuration is copied to output zarr for provenance tracking
+    - Block-wise processing can be interrupted and resumed
+    - MongoDB collections used: blocks_predicted, blocks_fragments, blocks_agglomerated_*,
+      info_segmentation
+
+    Examples
+    --------
+    Run full pipeline on 2 GPUs with 8 CPU workers:
+
+    >>> segment_dataset(
+    ...     project_dir='/data/projects',
+    ...     project_prefix='my_project',
+    ...     model_config='config/model_config.json',
+    ...     input_path='/data/raw.zarr',
+    ...     GPU_pool=[0, 1],
+    ...     num_workers=8,
+    ...     seg_config='seg_config.json'
+    ... )
+
+    Process only a subregion (100x1000x1000 nm):
+
+    >>> segment_dataset(
+    ...     project_dir='/data/projects',
+    ...     project_prefix='my_project',
+    ...     model_config='config/model_config.json',
+    ...     input_path='/data/raw.zarr',
+    ...     GPU_pool=[0],
+    ...     num_workers=4,
+    ...     roi_start=[0, 0, 0],
+    ...     roi_size=[100, 1000, 1000]
+    ... )
+
+    Run only fragment and agglomeration stages (predictions already exist):
+
+    >>> segment_dataset(
+    ...     project_dir='/data/projects',
+    ...     project_prefix='my_project',
+    ...     model_config='config/model_config.json',
+    ...     input_path='/data/raw.zarr',
+    ...     GPU_pool=[0],
+    ...     num_workers=8,
+    ...     todo=['fragment', 'agglomerate'],
+    ...     continue_previous=True
+    ... )
+
+    See Also
+    --------
+    PredictBlockwise.predict_blockwise : Prediction stage implementation
+    FragmentsBlockwise.extract_fragments_blockwise : Fragment extraction stage
+    AgglomerateBlockwise.agglomerate_blockwise : Agglomeration stage
+    FindSegments.find_segments : Extract final segments after agglomeration
+    '''
     
     tasks = ['predict', 'fragment', 'agglomerate']
     if any([t not in tasks for t in todo]):

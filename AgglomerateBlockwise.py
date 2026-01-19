@@ -32,6 +32,92 @@ def agglomerate_blockwise(
                 threshold=10,
                 lsd_sigma=60.0
                ):
+    '''
+    Build a region adjacency graph (RAG) and compute edge scores for fragment agglomeration.
+    Based on https://github.com/funkelab/lsd/blob/master/lsd/tutorial/scripts/03_agglomerate_blockwise.py
+
+    Parameters
+    ----------
+    pred_path : str
+        Path to zarr container with prediction data (affinities or LSDs).
+    chunk_voxel_size : list of int
+        Block size in voxels [z, y, x] for processing.
+    context_px : list of int
+        Context (overlap) size in voxels [z, y, x] for block boundaries.
+    db_name : str
+        MongoDB database name for tracking progress and storing edges.
+    merge_function : str
+        Edge scoring function name (e.g., 'hist_quant_25', 'mean'). Determines how
+        prediction values are aggregated across fragment boundaries.
+    num_workers : int
+        Number of CPU worker processes for parallel RAG construction.
+    db_host : str or None, optional
+        MongoDB connection URI. If None, uses localhost. Default: None
+    pred_dataset : str, optional
+        Name of dataset in pred_path containing predictions. Auto-detects mode:
+        3 channels = affinities, 10 channels = LSDs. Default: 'pred_affs'
+    fragments_path : str or None, optional
+        Path to zarr with fragments. If None, uses pred_path. Default: None
+    fragments_dataset : str, optional
+        Name of dataset containing fragments. Default: 'frags'
+    edges_collection : str, optional
+        Base name for MongoDB edge collection. Will be suffixed with merge_function
+        (e.g., 'edges_hist_quant_25') or '_lsd' for LSD mode. Default: 'edges'
+    threshold : float, optional
+        Agglomeration threshold for reference (stored in metadata, not used during
+        RAG construction). Default: 10
+    lsd_sigma : float, optional
+        Sigma for Gaussian smoothing when using LSD mode (in nm). Default: 60.0
+
+    Returns
+    -------
+    bool
+        True if all blocks completed successfully, False otherwise.
+
+    Notes
+    -----
+    - Automatically detects mode from prediction shape: 3 channels=affs, 10 channels=LSDs
+    - Edge collection name includes merge function for tracking different scoring methods
+    - Edges stored as MongoDB documents with fragment IDs (u, v) and merge score
+    - MongoDB collection 'blocks_agglomerated_<merge_function>' tracks completion
+    - Metadata written to 'info_segmentation' collection upon successful completion
+    - Workers write logs to: workers/tmp_extract_fragments_blockwise/agglomerate_blockwise_<id>.{out,err}
+
+    Examples
+    --------
+    Build RAG using histogram quantile merge function:
+
+    >>> agglomerate_blockwise(
+    ...     pred_path='/data/predictions.zarr',
+    ...     chunk_voxel_size=[100, 500, 500],
+    ...     context_px=[10, 50, 50],
+    ...     db_name='my_agglomeration',
+    ...     merge_function='hist_quant_25',
+    ...     num_workers=8,
+    ...     pred_dataset='pred_affs',
+    ...     fragments_dataset='frags',
+    ...     edges_collection='edges'
+    ... )
+
+    Build RAG with LSD predictions:
+
+    >>> agglomerate_blockwise(
+    ...     pred_path='/data/predictions.zarr',
+    ...     chunk_voxel_size=[100, 500, 500],
+    ...     context_px=[10, 50, 50],
+    ...     db_name='my_agglomeration',
+    ...     merge_function='mean',
+    ...     num_workers=8,
+    ...     pred_dataset='pred_lsds',
+    ...     lsd_sigma=60.0
+    ... )
+
+    See Also
+    --------
+    workers.AgglomerateWorker.agglomerate_worker : Worker that builds RAG subgraphs
+    FindSegments.find_segments : Extract final segments from RAG at threshold
+    start_worker : Spawns worker subprocesses
+    '''
 
     fragments_path = pred_path if fragments_path is None else fragments_path
 
@@ -132,6 +218,45 @@ def start_worker(
                  threshold,
                  lsd_sigma,
                  mode):
+    '''
+    Spawn an AgglomerateWorker subprocess for block-wise RAG construction.
+    Called by daisy for each worker process. 
+
+    Parameters
+    ----------
+    pred_path : str
+        Path to zarr container with predictions.
+    pred_dataset : str
+        Name of dataset in pred_path containing predictions.
+    fragments_path : str
+        Path to zarr container with fragments.
+    fragments_dataset : str
+        Name of dataset containing fragments.
+    db_host : str
+        MongoDB connection URI.
+    db_name : str
+        MongoDB database name for storing edges and tracking progress.
+    edges_collection : str
+        MongoDB collection name for storing edges (includes merge function suffix).
+    merge_function : str
+        Edge scoring function name (e.g., 'hist_quant_25', 'mean').
+    threshold : float
+        Agglomeration threshold for agglomeration with affinities.
+    lsd_sigma : float
+        Sigma for Gaussian smoothing when using LSD mode (in nm).
+    mode : str
+        Processing mode, either 'affs' or 'lsds'.
+
+    Notes
+    -----
+    - Worker ID is obtained from daisy.Context.from_env()
+    - Worker logs written to: workers/tmp_extract_fragments_blockwise/agglomerate_blockwise_<id>.{out,err}
+    - Configuration file persists for debugging
+
+    See Also
+    --------
+    workers.AgglomerateWorker.agglomerate_worker : Worker subprocess implementation
+    '''
     
     daisy_context = daisy.Context.from_env()
     worker_id = int(daisy_context.get('worker_id'))

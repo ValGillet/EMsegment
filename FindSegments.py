@@ -31,6 +31,83 @@ def find_segments(
                   chunk_bbox=[],
                   run_type=None,
                   **kwargs):
+    '''
+    Extract final segments from the region adjacency graph at multiple thresholds.
+    Based on https://github.com/funkelab/lsd/blob/master/lsd/tutorial/scripts/04_find_segments.py
+
+    Parameters
+    ----------
+    db_name : str
+        MongoDB database name containing the edge collection.
+    fragments_path : str
+        Path to zarr container with fragments dataset.
+    edges_collection : str
+        MongoDB collection name containing RAG edges (e.g., 'edges_hist_quant_25').
+    thresholds_minmax : list of float
+        [min, max] threshold range for agglomeration.
+    thresholds_step : float
+        Step size between thresholds in the range.
+    chunk_voxel_size : list of int, optional
+        Block size in voxels [z, y, x] for reading graph chunks. Default: [100, 500, 500]
+    num_workers : int, optional
+        Number of parallel workers for reading graph chunks. Default: 1
+    db_host : str or None, optional
+        MongoDB connection URI. If None, uses localhost. Default: None
+    fragments_dataset : str, optional
+        Name of dataset containing fragments. Default: 'frags'
+    chunk_bbox : list, optional
+        Bounding box for processing subset of volume as [start_chunk, end_chunk] indices.
+        If empty, processes entire volume. Default: []
+    run_type : str or None, optional
+        Optional label for organizing output LUTs in subdirectories. Default: None
+    **kwargs
+        Additional keyword arguments (ignored).
+
+    Returns
+    -------
+    bool
+        True if successful, raises exception otherwise.
+
+    Notes
+    -----
+    - Reads RAG in parallel blocks using daisy, aggregates into single graph
+    - For each threshold, computes connected components to merge fragments into segments
+    - LUTs saved as compressed numpy arrays: fragment_segment_lut[fragment_id] = segment_id
+    - Output directory: <fragments_path>/luts/fragment_segment_<edges_collection>/[run_type]/
+    - LUT filename format: seg_<edges_collection>_<threshold*100>.npz
+    - Metadata written to 'info_segmentation' collection in MongoDB
+
+    Examples
+    --------
+    Extract segments at thresholds from 0.0 to 1.0 with 0.1 steps:
+
+    >>> find_segments(
+    ...     db_name='my_agglomeration',
+    ...     fragments_path='/data/predictions.zarr',
+    ...     edges_collection='edges_hist_quant_25',
+    ...     thresholds_minmax=[0.0, 1.0],
+    ...     thresholds_step=0.1,
+    ...     chunk_voxel_size=[100, 500, 500],
+    ...     num_workers=8
+    ... )
+
+    Process subset of volume:
+
+    >>> find_segments(
+    ...     db_name='my_agglomeration',
+    ...     fragments_path='/data/predictions.zarr',
+    ...     edges_collection='edges_hist_quant_25',
+    ...     thresholds_minmax=[0.0, 0.5],
+    ...     thresholds_step=0.05,
+    ...     chunk_bbox=[[0, 0, 0], [10, 10, 10]],
+    ...     run_type='test_region'
+    ... )
+
+    See Also
+    --------
+    get_connected_components : Compute connected components at single threshold
+    read_chunk_graph : Read RAG edges for a block from MongoDB
+    '''
 
     start = time.time()
 
@@ -136,6 +213,37 @@ def get_connected_components(
         edges_collection,
         out_dir,
         **kwargs):
+    '''
+    Compute connected components at a single threshold and save lookup table.
+
+    Parameters
+    ----------
+    nodes : numpy.ndarray
+        1D array of fragment IDs (uint64).
+    edges : numpy.ndarray
+        2D array of shape (n_edges, 2) containing fragment pairs (u, v) as uint64.
+    scores : numpy.ndarray
+        1D array of merge scores for each edge (float32).
+    threshold : float
+        Agglomeration threshold. Edges with scores <= threshold are merged.
+    edges_collection : str
+        Edge collection name, used in output filename.
+    out_dir : str
+        Output directory for saving LUT.
+    **kwargs
+        Additional keyword arguments (ignored).
+
+    Notes
+    -----
+    - Output LUT maps fragment_id -> segment_id
+    - Saved as compressed numpy array: <out_dir>/seg_<edges_collection>_<threshold*100>.npz
+    - Lower thresholds produce more segments (less merging)
+    - Higher thresholds produce fewer segments (more aggressive merging)
+
+    See Also
+    --------
+    find_segments : Main function that calls this for multiple thresholds
+    '''
 
     logging.info(f'Getting CCs for threshold {threshold}...')
     components = connected_components(nodes, edges, scores, threshold)
@@ -153,6 +261,35 @@ def get_connected_components(
 
 
 def read_chunk_graph(block, fragments, db_host, db_name, edges_collection, shared_list):
+    '''
+    Read RAG edges for a block from MongoDB and append to shared list.
+
+    Called by daisy workers. Queries MongoDB for all edges connected to fragments in the
+    current block ROI. Extracts unique fragment IDs, edge pairs, and merge scores, then
+    appends to a multiprocessing-shared list for aggregation.
+
+    Parameters
+    ----------
+    block : daisy.Block
+        Block object containing read_roi for the current chunk.
+    fragments : funlib.persistence.Array
+        Array handle for fragments dataset.
+    db_host : str
+        MongoDB connection URI.
+    db_name : str
+        MongoDB database name.
+    edges_collection : str
+        MongoDB collection name containing edges.
+    shared_list : multiprocessing.Manager.list
+        Shared list for accumulating (nodes, edges, scores) tuples across workers.
+
+    Notes
+    -----
+    - Queries edges where either u or v is in the block's fragment set
+    - Returns tuples of (nodes, edges, scores) for parallel aggregation
+    - Edges stored as documents: {'u': fragment_id, 'v': fragment_id, 'merge_score': float}
+    - Uses $or query to find all edges touching fragments in the block
+    '''
 
     client = MongoClient(db_host)
     edges_coll = client[db_name][edges_collection]

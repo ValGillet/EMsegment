@@ -21,6 +21,41 @@ logging.getLogger('pymongo').setLevel(logging.WARNING) # Hide pymongo output whe
 
 
 def get_mask_roi(raw_path, db_name=None, db_host=None, ignore_missing=True):
+    '''
+    Retrieve the bounding box of all regions masked-in. 
+    This is used to constrain prediction to only regions where a mask exists.
+
+    Parameters
+    ----------
+    raw_path : str
+        Path to raw data zarr store. Used to construct default database name if db_name=None.
+    db_name : str or None, optional
+        MongoDB database name containing mask info. If None, auto-generated from raw_path
+        as 'mask_info_<zarr_name>'. Default: None
+    db_host : str or None, optional
+        MongoDB connection URI. If None, uses localhost. Default: None
+    ignore_missing : bool, optional
+        If True, returns None when database doesn't exist. If False, raises ValueError.
+        Default: True
+
+    Returns
+    -------
+    funlib.geometry.Roi or None
+        Region of interest covering all masked-in blocks in physical coordinates (nm).
+        Returns None if database doesn't exist and ignore_missing=True.
+
+    Raises
+    ------
+    ValueError
+        If database doesn't exist and ignore_missing=False.
+
+    Notes
+    -----
+    - Expects MongoDB collection named 'block_data' with documents containing:
+      - 'block_masked_in': 1 for included blocks
+      - 'top_left_nm': [z, y, x] starting coordinates in nanometers
+      - 'bot_right_nm': [z, y, x] ending coordinates in nanometers
+    '''
 
     client = pymongo.MongoClient(db_host)
 
@@ -65,11 +100,95 @@ def predict_blockwise(
             roi_start=None,
             roi_size=None,
             GPU_pool=None):
-    
     '''
-    Args:
+    Run affinity/LSDs prediction.
+    Based on https://github.com/funkelab/lsd/blob/master/lsd/tutorial/scripts/01_predict_blockwise.py
 
-        model_config:
+    Parameters
+    ----------
+    model_config : dict
+        Dictionary containing model parameters with keys:
+        - 'model_path': Path to trained PyTorch model checkpoint
+        - 'num_fmaps': Number of feature maps in model architecture
+        - 'output_shape': Model output shape in voxels [z, y, x]
+        - 'padding': Context padding required by model [z, y, x]
+    raw_path : str
+        Path to input zarr container with raw data.
+    output_path : str
+        Path to output zarr container where predictions will be written.
+    db_name : str
+        MongoDB database name for tracking block completion status.
+    models_per_gpu : int, optional
+        Number of model instances to run per GPU. Multiplies effective GPU pool size.
+        Default: 1
+    num_cache_workers : int, optional
+        Number of gunpowder cache workers for data loading per model instance.
+        Default: 4
+    mask_path : str or None, optional
+        Path to zarr containing binary mask. If provided, constrains prediction to masked region.
+        Default: None
+    db_host : str or None, optional
+        MongoDB connection URI. If None, uses localhost. Default: None
+    raw_dataset : str, optional
+        Name of dataset in raw_path containing raw data. Default: 'raw'
+    affs_dataset : str, optional
+        Name of output dataset for affinity predictions. Default: 'pred_affs'
+    lsds_dataset : str, optional
+        Name of output dataset for LSD predictions. Default: 'pred_lsds'
+    write_affs : bool, optional
+        Whether to write affinity predictions. Default: True
+    write_lsds : bool, optional
+        Whether to write LSD predictions. Default: False
+    roi_start : array-like or None, optional
+        Starting coordinates [z, y, x] in nanometers for region to process.
+        If None, uses full volume. Default: None
+    roi_size : array-like or None, optional
+        Size [z, y, x] in nanometers for region to process.
+        If None, uses full volume. Default: None
+    GPU_pool : list of int or None, optional
+        List of CUDA device IDs to use (e.g., [0, 1, 2]).
+        Will be multiplied by models_per_gpu to create worker pool. Default: None
+
+    Returns
+    -------
+    bool
+        True if all blocks completed successfully, False otherwise.
+
+    Notes
+    -----
+    - Block size and context are automatically computed from model's output_shape and padding
+    - Output datasets are created with shape (channels, z, y, x) as float32
+    - Chunk shape is aligned to model output_shape to avoid artifacts
+    - MongoDB collection 'blocks_predicted' tracks completion status
+    - Metadata is written to 'info_segmentation' collection upon successful completion
+    - Workers write logs to: workers/tmp_predict_blockwise/predict_blockwise_<id>.{out,err}
+    - Requires .zgroup file in zarr for gunpowder compatibility (created if missing)
+
+    Examples
+    --------
+    Run prediction with 2 GPUs, 2 models per GPU (4 workers total):
+
+    >>> model_config = {
+    ...     'model_path': '/models/em_model.pt',
+    ...     'num_fmaps': 12,
+    ...     'output_shape': [40, 200, 200],
+    ...     'padding': [20, 100, 100]
+    ... }
+    >>> predict_blockwise(
+    ...     model_config=model_config,
+    ...     raw_path='/data/raw.zarr',
+    ...     output_path='/data/predictions.zarr',
+    ...     db_name='my_predictions',
+    ...     models_per_gpu=2,
+    ...     GPU_pool=[0, 1],
+    ...     write_affs=True,
+    ...     write_lsds=True
+    ... )
+
+    See Also
+    --------
+    workers.PredictWorker.predict : Worker function that performs actual inference
+    start_predict_worker : Spawns worker subprocesses with GPU assignment
     '''
     
     model_path      = model_config['model_path']
@@ -268,6 +387,57 @@ def start_predict_worker(
         db_name,
         num_cache_workers,
         GPU_pool):
+    '''
+    Spawn a PredictWorker subprocess with GPU assignment for block-wise inference.
+
+    Called by daisy for each worker process. Creates a configuration file, assigns a GPU
+    from the pool based on worker ID, and launches PredictWorker.py as a subprocess with
+    CUDA_VISIBLE_DEVICES set appropriately.
+
+    Parameters
+    ----------
+    model_path : str
+        Path to trained PyTorch model checkpoint file.
+    num_fmaps : int
+        Number of feature maps in model architecture.
+    raw_path : str
+        Path to input zarr container with raw EM data.
+    raw_dataset : str
+        Name of dataset in raw_path containing EM data.
+    output_path : str
+        Path to output zarr container for predictions.
+    affs_dataset : str
+        Name of output dataset for affinity predictions.
+    lsds_dataset : str
+        Name of output dataset for LSD predictions.
+    write_affs : bool
+        Whether to generate and write affinity predictions.
+    write_lsds : bool
+        Whether to generate and write LSD predictions.
+    input_size : funlib.geometry.Coordinate
+        Input size for model including context, in physical units (nm).
+    output_size : funlib.geometry.Coordinate
+        Output size for model (write ROI), in physical units (nm).
+    db_host : str
+        MongoDB connection URI.
+    db_name : str
+        MongoDB database name for tracking progress.
+    num_cache_workers : int
+        Number of gunpowder cache workers for data loading.
+    GPU_pool : list of int
+        List of CUDA device IDs. Worker selects GPU using: GPU_pool[worker_id].
+
+    Notes
+    -----
+    - Worker ID is obtained from daisy.Context.from_env()
+    - Worker logs written to: workers/tmp_predict_blockwise/predict_blockwise_<id>.{out,err}
+    - GPU assignment: worker_id % len(GPU_pool) maps to specific GPU
+    - Configuration file persists for debugging (not auto-deleted)
+
+    See Also
+    --------
+    workers.PredictWorker.predict : Worker subprocess that performs inference
+    '''
 
     daisy_context = daisy.Context.from_env()
     worker_id = int(daisy_context.get('worker_id'))
