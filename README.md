@@ -2,26 +2,37 @@
 
 A Python package for 3D electron microscopy (EM) image segmentation using deep learning. Implements a distributed, block-wise processing pipeline that segments volumetric EM data through three stages: prediction, fragment extraction, and agglomeration.
 
-## Overview
-
-EMsegment processes large EM volumes by:
-
-1. **Prediction**: Running trained neural networks to generate affinity maps and/or local shape descriptors (LSDs)
-2. **Fragments**: Applying watershed segmentation to create supervoxels from predictions
-3. **Agglomeration**: Merging fragments into final segments using a region adjacency graph (RAG)
-
-Each stage uses [daisy](https://github.com/funkelab/daisy) for distributed block-wise processing with MongoDB for progress tracking, enabling fault-tolerant processing of arbitrarily large volumes.
+This project is based on [scripts](https://github.com/funkelab/lsd/tree/master/lsd/tutorial/scripts) by the Funke lab. Also see Acknowledgements section.
 
 ## Installation
 
+First, clone the repository locally
+```bash
+git clone https://github.com/Heinze-lab/EMsegment.git
+```
+
+Create a new environment and activate it (here using conda)
+```bash
+conda create -n myenv python=3.12
+conda activate myenv
+```
+
+Install dependencies and package
 ```bash
 pip install -r requirements.txt
 pip install -e .
 ```
 
+Alternatively, create the environment using the provided environment.yml directly
+```bash
+conda env create --n myenv --file=environment.yml
+```
+
+_Installation was tested on Ubuntu 20.04 with Python 3.12._
+
 ### Requirements
 
-- Python 3.8+
+- Python 3.12
 - CUDA-capable GPU(s) for prediction
 - MongoDB instance for progress tracking
 
@@ -41,30 +52,25 @@ python emsegment/Segment.py \
   --db-host mongodb://localhost:27017
 ```
 
-### Individual Stages
+### Key Parameters
 
-```bash
-# Prediction only
-python emsegment/Segment.py ... --todo predict
+| Parameter | Description |
+|-----------|-------------|
+| `--GPU` | CUDA device ID(s) for prediction |
+| `-c` | Number of CPU workers for fragments/agglomeration |
+| `--chunk-voxel-size` | Block size [Z,Y,X] in voxels. Default: `[100,500,500]` |
+| `--roi-start/--roi-size` | Process subset of a volume (in world unit) |
+| `--continue-previous` | Resume interrupted job using the highest ID |
+| `--start-over` | Clear progress and restart |
+| `--todo` | Stages of the pipeline to go through (`predict`, `fragment`, `agglomerate`). Default: all stages |
 
-# Fragments only (requires predictions)
-python emsegment/Segment.py ... --todo fragment
-
-# Agglomeration only (requires fragments)
-python emsegment/Segment.py ... --todo agglomerate
-```
-
-### Extract Final Segments
-
-After agglomeration, extract segments at different thresholds:
-
-```bash
-python emsegment/FindSegments.py config.json
-```
+For a description of all parameters, run `--help`.
 
 ## Configuration
 
 ### Model Configuration (`model_config.json`)
+
+The model configuration contains information necessary to build the model and load a trained state.
 
 ```json
 {
@@ -76,6 +82,8 @@ python emsegment/FindSegments.py config.json
 ```
 
 ### Segmentation Configuration (`seg_config.json`)
+
+The segmentation configuration contains parameters used for each stage of the segmentation pipeline.
 
 ```json
 {
@@ -100,37 +108,12 @@ python emsegment/FindSegments.py config.json
 }
 ```
 
-## Key Parameters
-
-| Parameter | Description |
-|-----------|-------------|
-| `--GPU` | CUDA device IDs for prediction |
-| `-c` | Number of CPU workers for fragments/agglomeration |
-| `--chunk-voxel-size` | Block size [Z,Y,X] in voxels (default: 100,500,500) |
-| `--roi-start/--roi-size` | Process subset of volume (in nm) |
-| `--continue-previous` | Resume interrupted job |
-| `--start-over` | Clear progress and restart |
-
 ## Data Format
 
 - **Input**: Zarr containers with raw EM data
 - **Predictions**: 4D arrays (channels, z, y, x) - 3 channels for affinities, 10 for LSDs
 - **Fragments**: 3D uint64 label arrays
-- **Output**: Lookup tables (LUTs) mapping fragment IDs to segment IDs
-
-## Project Structure
-
-```
-emsegment/
-├── Segment.py              # Main entry point
-├── PredictBlockwise.py     # Prediction stage
-├── FragmentsBlockwise.py   # Fragment extraction stage
-├── AgglomerateBlockwise.py # Agglomeration stage
-├── FindSegments.py         # Extract final segments
-├── workers/                # Worker subprocess scripts
-├── utils/                  # Utility functions
-└── config/                 # Example configurations
-```
+- **Agglomeration**: Weighted edges stored in MongoDB
 
 ## Acknowledgments
 
