@@ -11,14 +11,10 @@ This project is based on [scripts](https://github.com/funkelab/lsd/tree/master/l
 
 ## Installation
 
-<<<<<<< HEAD
 First, clone the repository locally
 ```bash
 git clone https://github.com/Heinze-lab/EMsegment.git
 ```
-=======
-Each stage uses [daisy](https://github.com/funkelab/daisy) for distributed block-wise processing with MongoDB for progress tracking.
->>>>>>> 259f3b126abdbb87341c5cd2ca3c7ece8d7820fc
 
 Create a new environment and activate it (here using conda)
 ```bash
@@ -62,7 +58,6 @@ python emsegment/Segment.py \
 
 ### Key Parameters
 
-<<<<<<< HEAD
 | Parameter | Description |
 |-----------|-------------|
 | `--GPU` | CUDA device ID(s) for prediction |
@@ -74,11 +69,6 @@ python emsegment/Segment.py \
 | `--todo` | Stages of the pipeline to go through (`predict`, `fragment`, `agglomerate`). Default: all stages |
 
 For a description of all parameters, run `--help`.
-=======
-# Agglomeration only (requires fragments)
-python emsegment/Segment.py ... --todo agglomerate
-```
->>>>>>> 259f3b126abdbb87341c5cd2ca3c7ece8d7820fc
 
 ## Configuration
 
@@ -127,24 +117,7 @@ The segmentation configuration contains parameters used for each stage of the se
 - **Input**: Zarr containers with raw EM data
 - **Predictions**: 4D arrays (channels, z, y, x) - 3 channels for affinities, 10 for LSDs
 - **Fragments**: 3D uint64 label arrays
-<<<<<<< HEAD
 - **Agglomeration**: Weighted edges stored in MongoDB
-=======
-
-## Project Structure
-
-```
-emsegment/
-├── Segment.py              # Main entry point
-├── PredictBlockwise.py     # Prediction stage
-├── FragmentsBlockwise.py   # Fragment extraction stage
-├── AgglomerateBlockwise.py # Agglomeration stage
-├── FindSegments.py         # Extract final segments
-├── workers/                # Worker subprocess scripts
-├── utils/                  # Utility functions
-└── config/                 # Example configurations
-```
->>>>>>> 259f3b126abdbb87341c5cd2ca3c7ece8d7820fc
 
 ## Acknowledgments
 
@@ -152,7 +125,7 @@ Built on tools from the [Funke Lab](https://github.com/funkelab):
 - [lsd](https://github.com/funkelab/lsd) - Local shape descriptors
 - [daisy](https://github.com/funkelab/daisy) - Distributed processing
 - [funlib.persistence](https://github.com/funkelab/funlib.persistence) - Interface with zarr containers
-- [funlib.geometry](https://github.com/funkelab/funlib.geometry) - Coordinates and Roi operations
+- [funlib.geometry](https://github.com/funkelab/funlib.geometry) - Coordinates and roi operations
 
 ## License
 
