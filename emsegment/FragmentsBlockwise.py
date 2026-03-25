@@ -2,7 +2,6 @@ import daisy
 import hashlib
 import json
 import logging
-import lsd
 import numpy as np
 import os
 import pymongo
