@@ -1,4 +1,5 @@
 numpy==2.4
+torch==2.5.1
 
 daisy==1.2.2
 funlib.persistence==0.6.1
